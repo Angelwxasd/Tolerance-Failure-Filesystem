@@ -1,0 +1,89 @@
+networks:
+  raft-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16  # Subred personalizada para IPs fijas
+
+volumes:
+  node1_data:
+  node2_data:
+  node3_data:
+  node4_data:
+  raft1_data:
+  raft2_data:
+  raft3_data:
+  raft4_data:
+
+services:
+  node1:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    environment:
+      - NODE_ID=1
+      - NODE_ADDR=172.20.0.2:50051  # Asignar IP fija
+      - PEER_ADDRS=172.20.0.3:50051,172.20.0.4:50051,172.20.0.5:50051
+      - RAFT_DATA_DIR=/app/raft-data  # Ruta para persistir datos de Raft
+    networks:
+      raft-network:
+        ipv4_address: 172.20.0.2  # Asignar IP fija
+    ports:
+      - "50051:50051"
+    volumes:
+      - node1_data:/app/files
+      - raft1_data:/app/raft-data
+
+  node2:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    environment:
+      - NODE_ID=2
+      - NODE_ADDR=172.20.0.3:50051
+      - PEER_ADDRS=172.20.0.2:50051,172.20.0.4:50051,172.20.0.5:50051
+      - RAFT_DATA_DIR=/app/raft-data
+    networks:
+      raft-network:
+        ipv4_address: 172.20.0.3
+    ports:
+      - "50052:50051"
+    volumes:
+      - node2_data:/app/files
+      - raft2_data:/app/raft-data
+
+  node3:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    environment:
+      - NODE_ID=3
+      - NODE_ADDR=172.20.0.4:50051
+      - PEER_ADDRS=172.20.0.2:50051,172.20.0.3:50051,172.20.0.5:50051
+      - RAFT_DATA_DIR=/app/raft-data
+    networks:
+      raft-network:
+        ipv4_address: 172.20.0.4
+    ports:
+      - "50053:50051"
+    volumes:
+      - node3_data:/app/files
+      - raft3_data:/app/raft-data
+
+  node4:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    environment:
+      - NODE_ID=4
+      - NODE_ADDR=172.20.0.5:50051
+      - PEER_ADDRS=172.20.0.2:50051,172.20.0.3:50051,172.20.0.4:50051
+      - RAFT_DATA_DIR=/app/raft-data
+    networks:
+      raft-network:
+        ipv4_address: 172.20.0.5
+    ports:
+      - "50054:50051"
+    volumes:
+      - node4_data:/app/files
+      - raft4_data:/app/raft-data

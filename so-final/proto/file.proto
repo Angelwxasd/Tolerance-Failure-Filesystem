@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package proto;
+option go_package = "./proto"; 
+
+service RaftService {
+  rpc RequestVote(VoteRequest) returns (VoteResponse);
+  rpc AppendEntries(AppendRequest) returns (AppendResponse);
+  rpc TransferFile (FileData) returns (TransferResponse);
+  rpc InstallSnapshot(stream SnapshotChunk) returns (SnapshotAck);
+}
+
+message SnapshotChunk {
+    bytes data = 1;
+    int64 chunk_index = 2;
+    bool is_last = 3;
+    int64 term = 4;
+    int64 leader_id = 5;
+    int64 last_included_index = 6;
+    int64 last_included_term = 7;
+}
+
+message SnapshotAck {
+    bool success = 1;
+    int64 term = 2;
+}
+
+message VoteRequest {
+  int64 term = 1;
+  int64 candidateId = 2;
+  int64 lastLogIndex = 3;
+  int64 lastLogTerm = 4;
+}
+
+message VoteResponse {
+  int64 term = 1;
+  bool voteGranted = 2;
+}
+
+message AppendRequest {
+  int64 term = 1;
+  int64 leaderId = 2;
+  int64 prevLogIndex = 3;
+  int64 prevLogTerm = 4;
+  repeated LogEntry entries = 5;
+  int64 leaderCommit = 6;
+}
+
+message AppendResponse {
+  int64 term = 1;
+  bool success = 2;
+}
+
+message LogEntry {
+  int64 term = 1;
+  bytes command = 2;
+  int64 index = 3; 
+}
+
+message FileData {
+  bytes content = 1;
+  string filename = 2;
+}
+
+message TransferResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message FileCommand {
+    enum Operation {
+        TRANSFER = 0;
+        DELETE = 1;
+    }
+    Operation op = 1;
+    string path = 2;
+    bytes content = 3; // Campo necesario para el contenido del archivo
+    string targetNode = 4; // Solo para TRANSFER
+}

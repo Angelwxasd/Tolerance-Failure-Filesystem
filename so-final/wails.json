@@ -1,0 +1,12 @@
+{
+    "name": "so-final",
+    "outputfilename": "so-final",
+    "frontend:install": "npm install",
+    "frontend:build": "npm run build",
+    "frontend:dev:watcher": "npm run dev",
+    "frontend:dev:serverUrl": "auto",
+    "author": {
+        "name": "AngelXX",
+        "email": "angelwxasd@gmail.com"
+    }
+}
