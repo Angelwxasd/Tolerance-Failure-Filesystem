@@ -64,7 +64,7 @@ func (x FileCommand_Operation) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use FileCommand_Operation.Descriptor instead.
 func (FileCommand_Operation) EnumDescriptor() ([]byte, []int) {
-	return file_file_proto_rawDescGZIP(), []int{7, 0}
+	return file_file_proto_rawDescGZIP(), []int{11, 0}
 }
 
 type SnapshotChunk struct {
@@ -76,7 +76,6 @@ type SnapshotChunk struct {
 	LeaderId          int64                  `protobuf:"varint,5,opt,name=leader_id,json=leaderId,proto3" json:"leader_id,omitempty"`
 	LastIncludedIndex int64                  `protobuf:"varint,6,opt,name=last_included_index,json=lastIncludedIndex,proto3" json:"last_included_index,omitempty"`
 	LastIncludedTerm  int64                  `protobuf:"varint,7,opt,name=last_included_term,json=lastIncludedTerm,proto3" json:"last_included_term,omitempty"`
-	Checksum          string                 `protobuf:"bytes,8,opt,name=checksum,proto3" json:"checksum,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -160,13 +159,6 @@ func (x *SnapshotChunk) GetLastIncludedTerm() int64 {
 	return 0
 }
 
-func (x *SnapshotChunk) GetChecksum() string {
-	if x != nil {
-		return x.Checksum
-	}
-	return ""
-}
-
 type SnapshotAck struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
@@ -219,19 +211,131 @@ func (x *SnapshotAck) GetTerm() int64 {
 	return 0
 }
 
+type JoinRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeId        int64                  `protobuf:"varint,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Address       string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+	LastIndex     int64                  `protobuf:"varint,3,opt,name=last_index,json=lastIndex,proto3" json:"last_index,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JoinRequest) Reset() {
+	*x = JoinRequest{}
+	mi := &file_file_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JoinRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JoinRequest) ProtoMessage() {}
+
+func (x *JoinRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_file_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JoinRequest.ProtoReflect.Descriptor instead.
+func (*JoinRequest) Descriptor() ([]byte, []int) {
+	return file_file_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *JoinRequest) GetNodeId() int64 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
+func (x *JoinRequest) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
+func (x *JoinRequest) GetLastIndex() int64 {
+	if x != nil {
+		return x.LastIndex
+	}
+	return 0
+}
+
+type JoinResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JoinResponse) Reset() {
+	*x = JoinResponse{}
+	mi := &file_file_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JoinResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JoinResponse) ProtoMessage() {}
+
+func (x *JoinResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_file_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JoinResponse.ProtoReflect.Descriptor instead.
+func (*JoinResponse) Descriptor() ([]byte, []int) {
+	return file_file_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *JoinResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *JoinResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 type VoteRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Term          int64                  `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
-	CandidateId   int64                  `protobuf:"varint,2,opt,name=candidate_id,json=candidateId,proto3" json:"candidate_id,omitempty"`
-	LastLogIndex  int64                  `protobuf:"varint,3,opt,name=last_log_index,json=lastLogIndex,proto3" json:"last_log_index,omitempty"`
-	LastLogTerm   int64                  `protobuf:"varint,4,opt,name=last_log_term,json=lastLogTerm,proto3" json:"last_log_term,omitempty"`
+	CandidateId   int64                  `protobuf:"varint,2,opt,name=candidateId,proto3" json:"candidateId,omitempty"`
+	LastLogIndex  int64                  `protobuf:"varint,3,opt,name=lastLogIndex,proto3" json:"lastLogIndex,omitempty"`
+	LastLogTerm   int64                  `protobuf:"varint,4,opt,name=lastLogTerm,proto3" json:"lastLogTerm,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VoteRequest) Reset() {
 	*x = VoteRequest{}
-	mi := &file_file_proto_msgTypes[2]
+	mi := &file_file_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -243,7 +347,7 @@ func (x *VoteRequest) String() string {
 func (*VoteRequest) ProtoMessage() {}
 
 func (x *VoteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_file_proto_msgTypes[2]
+	mi := &file_file_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -256,7 +360,7 @@ func (x *VoteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VoteRequest.ProtoReflect.Descriptor instead.
 func (*VoteRequest) Descriptor() ([]byte, []int) {
-	return file_file_proto_rawDescGZIP(), []int{2}
+	return file_file_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *VoteRequest) GetTerm() int64 {
@@ -290,14 +394,14 @@ func (x *VoteRequest) GetLastLogTerm() int64 {
 type VoteResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Term          int64                  `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
-	VoteGranted   bool                   `protobuf:"varint,2,opt,name=vote_granted,json=voteGranted,proto3" json:"vote_granted,omitempty"`
+	VoteGranted   bool                   `protobuf:"varint,2,opt,name=voteGranted,proto3" json:"voteGranted,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VoteResponse) Reset() {
 	*x = VoteResponse{}
-	mi := &file_file_proto_msgTypes[3]
+	mi := &file_file_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -309,7 +413,7 @@ func (x *VoteResponse) String() string {
 func (*VoteResponse) ProtoMessage() {}
 
 func (x *VoteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_file_proto_msgTypes[3]
+	mi := &file_file_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -322,7 +426,7 @@ func (x *VoteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VoteResponse.ProtoReflect.Descriptor instead.
 func (*VoteResponse) Descriptor() ([]byte, []int) {
-	return file_file_proto_rawDescGZIP(), []int{3}
+	return file_file_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *VoteResponse) GetTerm() int64 {
@@ -342,18 +446,18 @@ func (x *VoteResponse) GetVoteGranted() bool {
 type AppendRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Term          int64                  `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
-	LeaderId      int64                  `protobuf:"varint,2,opt,name=leader_id,json=leaderId,proto3" json:"leader_id,omitempty"`
-	PrevLogIndex  int64                  `protobuf:"varint,3,opt,name=prev_log_index,json=prevLogIndex,proto3" json:"prev_log_index,omitempty"`
-	PrevLogTerm   int64                  `protobuf:"varint,4,opt,name=prev_log_term,json=prevLogTerm,proto3" json:"prev_log_term,omitempty"`
+	LeaderId      int64                  `protobuf:"varint,2,opt,name=leaderId,proto3" json:"leaderId,omitempty"`
+	PrevLogIndex  int64                  `protobuf:"varint,3,opt,name=prevLogIndex,proto3" json:"prevLogIndex,omitempty"`
+	PrevLogTerm   int64                  `protobuf:"varint,4,opt,name=prevLogTerm,proto3" json:"prevLogTerm,omitempty"`
 	Entries       []*LogEntry            `protobuf:"bytes,5,rep,name=entries,proto3" json:"entries,omitempty"`
-	LeaderCommit  int64                  `protobuf:"varint,6,opt,name=leader_commit,json=leaderCommit,proto3" json:"leader_commit,omitempty"`
+	LeaderCommit  int64                  `protobuf:"varint,6,opt,name=leaderCommit,proto3" json:"leaderCommit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AppendRequest) Reset() {
 	*x = AppendRequest{}
-	mi := &file_file_proto_msgTypes[4]
+	mi := &file_file_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -365,7 +469,7 @@ func (x *AppendRequest) String() string {
 func (*AppendRequest) ProtoMessage() {}
 
 func (x *AppendRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_file_proto_msgTypes[4]
+	mi := &file_file_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -378,7 +482,7 @@ func (x *AppendRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppendRequest.ProtoReflect.Descriptor instead.
 func (*AppendRequest) Descriptor() ([]byte, []int) {
-	return file_file_proto_rawDescGZIP(), []int{4}
+	return file_file_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *AppendRequest) GetTerm() int64 {
@@ -433,7 +537,7 @@ type AppendResponse struct {
 
 func (x *AppendResponse) Reset() {
 	*x = AppendResponse{}
-	mi := &file_file_proto_msgTypes[5]
+	mi := &file_file_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -445,7 +549,7 @@ func (x *AppendResponse) String() string {
 func (*AppendResponse) ProtoMessage() {}
 
 func (x *AppendResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_file_proto_msgTypes[5]
+	mi := &file_file_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -458,7 +562,7 @@ func (x *AppendResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppendResponse.ProtoReflect.Descriptor instead.
 func (*AppendResponse) Descriptor() ([]byte, []int) {
-	return file_file_proto_rawDescGZIP(), []int{5}
+	return file_file_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *AppendResponse) GetTerm() int64 {
@@ -479,13 +583,14 @@ type LogEntry struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Term          int64                  `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
 	Command       []byte                 `protobuf:"bytes,2,opt,name=command,proto3" json:"command,omitempty"`
+	Index         int64                  `protobuf:"varint,3,opt,name=index,proto3" json:"index,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *LogEntry) Reset() {
 	*x = LogEntry{}
-	mi := &file_file_proto_msgTypes[6]
+	mi := &file_file_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -497,7 +602,7 @@ func (x *LogEntry) String() string {
 func (*LogEntry) ProtoMessage() {}
 
 func (x *LogEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_file_proto_msgTypes[6]
+	mi := &file_file_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -510,7 +615,7 @@ func (x *LogEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogEntry.ProtoReflect.Descriptor instead.
 func (*LogEntry) Descriptor() ([]byte, []int) {
-	return file_file_proto_rawDescGZIP(), []int{6}
+	return file_file_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *LogEntry) GetTerm() int64 {
@@ -527,19 +632,130 @@ func (x *LogEntry) GetCommand() []byte {
 	return nil
 }
 
+func (x *LogEntry) GetIndex() int64 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+type FileData struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Content       []byte                 `protobuf:"bytes,1,opt,name=content,proto3" json:"content,omitempty"`
+	Filename      string                 `protobuf:"bytes,2,opt,name=filename,proto3" json:"filename,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileData) Reset() {
+	*x = FileData{}
+	mi := &file_file_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileData) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileData) ProtoMessage() {}
+
+func (x *FileData) ProtoReflect() protoreflect.Message {
+	mi := &file_file_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileData.ProtoReflect.Descriptor instead.
+func (*FileData) Descriptor() ([]byte, []int) {
+	return file_file_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *FileData) GetContent() []byte {
+	if x != nil {
+		return x.Content
+	}
+	return nil
+}
+
+func (x *FileData) GetFilename() string {
+	if x != nil {
+		return x.Filename
+	}
+	return ""
+}
+
+type TransferResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransferResponse) Reset() {
+	*x = TransferResponse{}
+	mi := &file_file_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransferResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransferResponse) ProtoMessage() {}
+
+func (x *TransferResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_file_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransferResponse.ProtoReflect.Descriptor instead.
+func (*TransferResponse) Descriptor() ([]byte, []int) {
+	return file_file_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *TransferResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *TransferResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 type FileCommand struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Op            FileCommand_Operation  `protobuf:"varint,1,opt,name=op,proto3,enum=proto.FileCommand_Operation" json:"op,omitempty"`
 	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	Content       []byte                 `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"`
-	TargetNode    string                 `protobuf:"bytes,4,opt,name=target_node,json=targetNode,proto3" json:"target_node,omitempty"`
+	Content       []byte                 `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"`       // Campo necesario para el contenido del archivo
+	TargetNode    string                 `protobuf:"bytes,4,opt,name=targetNode,proto3" json:"targetNode,omitempty"` // Solo para TRANSFER
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *FileCommand) Reset() {
 	*x = FileCommand{}
-	mi := &file_file_proto_msgTypes[7]
+	mi := &file_file_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -551,7 +767,7 @@ func (x *FileCommand) String() string {
 func (*FileCommand) ProtoMessage() {}
 
 func (x *FileCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_file_proto_msgTypes[7]
+	mi := &file_file_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -564,7 +780,7 @@ func (x *FileCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileCommand.ProtoReflect.Descriptor instead.
 func (*FileCommand) Descriptor() ([]byte, []int) {
-	return file_file_proto_rawDescGZIP(), []int{7}
+	return file_file_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *FileCommand) GetOp() FileCommand_Operation {
@@ -595,176 +811,12 @@ func (x *FileCommand) GetTargetNode() string {
 	return ""
 }
 
-type TransferResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *TransferResponse) Reset() {
-	*x = TransferResponse{}
-	mi := &file_file_proto_msgTypes[8]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *TransferResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*TransferResponse) ProtoMessage() {}
-
-func (x *TransferResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_file_proto_msgTypes[8]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use TransferResponse.ProtoReflect.Descriptor instead.
-func (*TransferResponse) Descriptor() ([]byte, []int) {
-	return file_file_proto_rawDescGZIP(), []int{8}
-}
-
-func (x *TransferResponse) GetSuccess() bool {
-	if x != nil {
-		return x.Success
-	}
-	return false
-}
-
-func (x *TransferResponse) GetMessage() string {
-	if x != nil {
-		return x.Message
-	}
-	return ""
-}
-
-type JoinRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeId        int64                  `protobuf:"varint,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	Address       string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
-	LastIndex     int64                  `protobuf:"varint,3,opt,name=last_index,json=lastIndex,proto3" json:"last_index,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *JoinRequest) Reset() {
-	*x = JoinRequest{}
-	mi := &file_file_proto_msgTypes[9]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *JoinRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*JoinRequest) ProtoMessage() {}
-
-func (x *JoinRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_file_proto_msgTypes[9]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use JoinRequest.ProtoReflect.Descriptor instead.
-func (*JoinRequest) Descriptor() ([]byte, []int) {
-	return file_file_proto_rawDescGZIP(), []int{9}
-}
-
-func (x *JoinRequest) GetNodeId() int64 {
-	if x != nil {
-		return x.NodeId
-	}
-	return 0
-}
-
-func (x *JoinRequest) GetAddress() string {
-	if x != nil {
-		return x.Address
-	}
-	return ""
-}
-
-func (x *JoinRequest) GetLastIndex() int64 {
-	if x != nil {
-		return x.LastIndex
-	}
-	return 0
-}
-
-type JoinResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	Term          int64                  `protobuf:"varint,2,opt,name=term,proto3" json:"term,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *JoinResponse) Reset() {
-	*x = JoinResponse{}
-	mi := &file_file_proto_msgTypes[10]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *JoinResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*JoinResponse) ProtoMessage() {}
-
-func (x *JoinResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_file_proto_msgTypes[10]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use JoinResponse.ProtoReflect.Descriptor instead.
-func (*JoinResponse) Descriptor() ([]byte, []int) {
-	return file_file_proto_rawDescGZIP(), []int{10}
-}
-
-func (x *JoinResponse) GetSuccess() bool {
-	if x != nil {
-		return x.Success
-	}
-	return false
-}
-
-func (x *JoinResponse) GetTerm() int64 {
-	if x != nil {
-		return x.Term
-	}
-	return 0
-}
-
 var File_file_proto protoreflect.FileDescriptor
 
 const file_file_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"file.proto\x12\x05proto\"\x88\x02\n" +
+	"file.proto\x12\x05proto\"\xec\x01\n" +
 	"\rSnapshotChunk\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1f\n" +
 	"\vchunk_index\x18\x02 \x01(\x03R\n" +
@@ -773,57 +825,61 @@ const file_file_proto_rawDesc = "" +
 	"\x04term\x18\x04 \x01(\x03R\x04term\x12\x1b\n" +
 	"\tleader_id\x18\x05 \x01(\x03R\bleaderId\x12.\n" +
 	"\x13last_included_index\x18\x06 \x01(\x03R\x11lastIncludedIndex\x12,\n" +
-	"\x12last_included_term\x18\a \x01(\x03R\x10lastIncludedTerm\x12\x1a\n" +
-	"\bchecksum\x18\b \x01(\tR\bchecksum\";\n" +
+	"\x12last_included_term\x18\a \x01(\x03R\x10lastIncludedTerm\";\n" +
 	"\vSnapshotAck\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x12\n" +
-	"\x04term\x18\x02 \x01(\x03R\x04term\"\x8e\x01\n" +
-	"\vVoteRequest\x12\x12\n" +
-	"\x04term\x18\x01 \x01(\x03R\x04term\x12!\n" +
-	"\fcandidate_id\x18\x02 \x01(\x03R\vcandidateId\x12$\n" +
-	"\x0elast_log_index\x18\x03 \x01(\x03R\flastLogIndex\x12\"\n" +
-	"\rlast_log_term\x18\x04 \x01(\x03R\vlastLogTerm\"E\n" +
-	"\fVoteResponse\x12\x12\n" +
-	"\x04term\x18\x01 \x01(\x03R\x04term\x12!\n" +
-	"\fvote_granted\x18\x02 \x01(\bR\vvoteGranted\"\xda\x01\n" +
-	"\rAppendRequest\x12\x12\n" +
-	"\x04term\x18\x01 \x01(\x03R\x04term\x12\x1b\n" +
-	"\tleader_id\x18\x02 \x01(\x03R\bleaderId\x12$\n" +
-	"\x0eprev_log_index\x18\x03 \x01(\x03R\fprevLogIndex\x12\"\n" +
-	"\rprev_log_term\x18\x04 \x01(\x03R\vprevLogTerm\x12)\n" +
-	"\aentries\x18\x05 \x03(\v2\x0f.proto.LogEntryR\aentries\x12#\n" +
-	"\rleader_commit\x18\x06 \x01(\x03R\fleaderCommit\">\n" +
-	"\x0eAppendResponse\x12\x12\n" +
-	"\x04term\x18\x01 \x01(\x03R\x04term\x12\x18\n" +
-	"\asuccess\x18\x02 \x01(\bR\asuccess\"8\n" +
-	"\bLogEntry\x12\x12\n" +
-	"\x04term\x18\x01 \x01(\x03R\x04term\x12\x18\n" +
-	"\acommand\x18\x02 \x01(\fR\acommand\"\xb1\x01\n" +
-	"\vFileCommand\x12,\n" +
-	"\x02op\x18\x01 \x01(\x0e2\x1c.proto.FileCommand.OperationR\x02op\x12\x12\n" +
-	"\x04path\x18\x02 \x01(\tR\x04path\x12\x18\n" +
-	"\acontent\x18\x03 \x01(\fR\acontent\x12\x1f\n" +
-	"\vtarget_node\x18\x04 \x01(\tR\n" +
-	"targetNode\"%\n" +
-	"\tOperation\x12\f\n" +
-	"\bTRANSFER\x10\x00\x12\n" +
-	"\n" +
-	"\x06DELETE\x10\x01\"F\n" +
-	"\x10TransferResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"_\n" +
+	"\x04term\x18\x02 \x01(\x03R\x04term\"_\n" +
 	"\vJoinRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\x03R\x06nodeId\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x1d\n" +
 	"\n" +
-	"last_index\x18\x03 \x01(\x03R\tlastIndex\"<\n" +
+	"last_index\x18\x03 \x01(\x03R\tlastIndex\"B\n" +
 	"\fJoinResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x12\n" +
-	"\x04term\x18\x02 \x01(\x03R\x04term2\xb7\x02\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x89\x01\n" +
+	"\vVoteRequest\x12\x12\n" +
+	"\x04term\x18\x01 \x01(\x03R\x04term\x12 \n" +
+	"\vcandidateId\x18\x02 \x01(\x03R\vcandidateId\x12\"\n" +
+	"\flastLogIndex\x18\x03 \x01(\x03R\flastLogIndex\x12 \n" +
+	"\vlastLogTerm\x18\x04 \x01(\x03R\vlastLogTerm\"D\n" +
+	"\fVoteResponse\x12\x12\n" +
+	"\x04term\x18\x01 \x01(\x03R\x04term\x12 \n" +
+	"\vvoteGranted\x18\x02 \x01(\bR\vvoteGranted\"\xd4\x01\n" +
+	"\rAppendRequest\x12\x12\n" +
+	"\x04term\x18\x01 \x01(\x03R\x04term\x12\x1a\n" +
+	"\bleaderId\x18\x02 \x01(\x03R\bleaderId\x12\"\n" +
+	"\fprevLogIndex\x18\x03 \x01(\x03R\fprevLogIndex\x12 \n" +
+	"\vprevLogTerm\x18\x04 \x01(\x03R\vprevLogTerm\x12)\n" +
+	"\aentries\x18\x05 \x03(\v2\x0f.proto.LogEntryR\aentries\x12\"\n" +
+	"\fleaderCommit\x18\x06 \x01(\x03R\fleaderCommit\">\n" +
+	"\x0eAppendResponse\x12\x12\n" +
+	"\x04term\x18\x01 \x01(\x03R\x04term\x12\x18\n" +
+	"\asuccess\x18\x02 \x01(\bR\asuccess\"N\n" +
+	"\bLogEntry\x12\x12\n" +
+	"\x04term\x18\x01 \x01(\x03R\x04term\x12\x18\n" +
+	"\acommand\x18\x02 \x01(\fR\acommand\x12\x14\n" +
+	"\x05index\x18\x03 \x01(\x03R\x05index\"@\n" +
+	"\bFileData\x12\x18\n" +
+	"\acontent\x18\x01 \x01(\fR\acontent\x12\x1a\n" +
+	"\bfilename\x18\x02 \x01(\tR\bfilename\"F\n" +
+	"\x10TransferResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xb0\x01\n" +
+	"\vFileCommand\x12,\n" +
+	"\x02op\x18\x01 \x01(\x0e2\x1c.proto.FileCommand.OperationR\x02op\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\x12\x18\n" +
+	"\acontent\x18\x03 \x01(\fR\acontent\x12\x1e\n" +
+	"\n" +
+	"targetNode\x18\x04 \x01(\tR\n" +
+	"targetNode\"%\n" +
+	"\tOperation\x12\f\n" +
+	"\bTRANSFER\x10\x00\x12\n" +
+	"\n" +
+	"\x06DELETE\x10\x012\xb4\x02\n" +
 	"\vRaftService\x126\n" +
 	"\vRequestVote\x12\x12.proto.VoteRequest\x1a\x13.proto.VoteResponse\x12<\n" +
-	"\rAppendEntries\x12\x14.proto.AppendRequest\x1a\x15.proto.AppendResponse\x12;\n" +
-	"\fTransferFile\x12\x12.proto.FileCommand\x1a\x17.proto.TransferResponse\x12=\n" +
+	"\rAppendEntries\x12\x14.proto.AppendRequest\x1a\x15.proto.AppendResponse\x128\n" +
+	"\fTransferFile\x12\x0f.proto.FileData\x1a\x17.proto.TransferResponse\x12=\n" +
 	"\x0fInstallSnapshot\x12\x14.proto.SnapshotChunk\x1a\x12.proto.SnapshotAck(\x01\x126\n" +
 	"\vJoinCluster\x12\x12.proto.JoinRequest\x1a\x13.proto.JoinResponseB\tZ\a./protob\x06proto3"
 
@@ -840,34 +896,35 @@ func file_file_proto_rawDescGZIP() []byte {
 }
 
 var file_file_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_file_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_file_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_file_proto_goTypes = []any{
 	(FileCommand_Operation)(0), // 0: proto.FileCommand.Operation
 	(*SnapshotChunk)(nil),      // 1: proto.SnapshotChunk
 	(*SnapshotAck)(nil),        // 2: proto.SnapshotAck
-	(*VoteRequest)(nil),        // 3: proto.VoteRequest
-	(*VoteResponse)(nil),       // 4: proto.VoteResponse
-	(*AppendRequest)(nil),      // 5: proto.AppendRequest
-	(*AppendResponse)(nil),     // 6: proto.AppendResponse
-	(*LogEntry)(nil),           // 7: proto.LogEntry
-	(*FileCommand)(nil),        // 8: proto.FileCommand
-	(*TransferResponse)(nil),   // 9: proto.TransferResponse
-	(*JoinRequest)(nil),        // 10: proto.JoinRequest
-	(*JoinResponse)(nil),       // 11: proto.JoinResponse
+	(*JoinRequest)(nil),        // 3: proto.JoinRequest
+	(*JoinResponse)(nil),       // 4: proto.JoinResponse
+	(*VoteRequest)(nil),        // 5: proto.VoteRequest
+	(*VoteResponse)(nil),       // 6: proto.VoteResponse
+	(*AppendRequest)(nil),      // 7: proto.AppendRequest
+	(*AppendResponse)(nil),     // 8: proto.AppendResponse
+	(*LogEntry)(nil),           // 9: proto.LogEntry
+	(*FileData)(nil),           // 10: proto.FileData
+	(*TransferResponse)(nil),   // 11: proto.TransferResponse
+	(*FileCommand)(nil),        // 12: proto.FileCommand
 }
 var file_file_proto_depIdxs = []int32{
-	7,  // 0: proto.AppendRequest.entries:type_name -> proto.LogEntry
+	9,  // 0: proto.AppendRequest.entries:type_name -> proto.LogEntry
 	0,  // 1: proto.FileCommand.op:type_name -> proto.FileCommand.Operation
-	3,  // 2: proto.RaftService.RequestVote:input_type -> proto.VoteRequest
-	5,  // 3: proto.RaftService.AppendEntries:input_type -> proto.AppendRequest
-	8,  // 4: proto.RaftService.TransferFile:input_type -> proto.FileCommand
+	5,  // 2: proto.RaftService.RequestVote:input_type -> proto.VoteRequest
+	7,  // 3: proto.RaftService.AppendEntries:input_type -> proto.AppendRequest
+	10, // 4: proto.RaftService.TransferFile:input_type -> proto.FileData
 	1,  // 5: proto.RaftService.InstallSnapshot:input_type -> proto.SnapshotChunk
-	10, // 6: proto.RaftService.JoinCluster:input_type -> proto.JoinRequest
-	4,  // 7: proto.RaftService.RequestVote:output_type -> proto.VoteResponse
-	6,  // 8: proto.RaftService.AppendEntries:output_type -> proto.AppendResponse
-	9,  // 9: proto.RaftService.TransferFile:output_type -> proto.TransferResponse
+	3,  // 6: proto.RaftService.JoinCluster:input_type -> proto.JoinRequest
+	6,  // 7: proto.RaftService.RequestVote:output_type -> proto.VoteResponse
+	8,  // 8: proto.RaftService.AppendEntries:output_type -> proto.AppendResponse
+	11, // 9: proto.RaftService.TransferFile:output_type -> proto.TransferResponse
 	2,  // 10: proto.RaftService.InstallSnapshot:output_type -> proto.SnapshotAck
-	11, // 11: proto.RaftService.JoinCluster:output_type -> proto.JoinResponse
+	4,  // 11: proto.RaftService.JoinCluster:output_type -> proto.JoinResponse
 	7,  // [7:12] is the sub-list for method output_type
 	2,  // [2:7] is the sub-list for method input_type
 	2,  // [2:2] is the sub-list for extension type_name
@@ -886,7 +943,7 @@ func file_file_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_file_proto_rawDesc), len(file_file_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -700,104 +700,66 @@ func (rf *Raft) createSnapshot() []byte {
 }
 
 func (rf *Raft) sendSnapshot(peer *Peer, snapshot []byte) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	// Solo líderes pueden enviar snapshots
+	if rf.state != Leader {
+		log.Printf("Nodo %d no es líder, no puede enviar snapshots", rf.id)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	stream, err := peer.client.InstallSnapshot(ctx)
 	if err != nil {
-		log.Printf("Error al crear stream para snapshot: %v", err)
+		log.Printf("Error creando stream para peer %d: %v", peer.ID, err)
 		return
 	}
 
-	chunkSize := 512 * 1024 // 512 KB por chunk
-	totalChunks := (len(snapshot) + chunkSize - 1) / chunkSize
+	// Enviar metadata primero
+	metadata := &pb.SnapshotChunk{
+		Term:              int64(rf.currentTerm),
+		LeaderId:          int64(rf.id),
+		LastIncludedIndex: int64(rf.lastIncludedIndex),
+		LastIncludedTerm:  int64(rf.lastIncludedTerm),
+		IsLast:            false,
+	}
+	if err := stream.Send(metadata); err != nil {
+		log.Printf("Error enviando metadata a %d: %v", peer.ID, err)
+		return
+	}
 
-	for i := 0; i < totalChunks; i++ {
-		start := i * chunkSize
-		end := start + chunkSize
+	// Enviar chunks de datos (512 KB cada uno)
+	chunkSize := 512 * 1024
+	for i := 0; i < len(snapshot); i += chunkSize {
+		end := i + chunkSize
 		if end > len(snapshot) {
 			end = len(snapshot)
 		}
 
 		chunk := &pb.SnapshotChunk{
-			Data:              snapshot[start:end],
-			ChunkIndex:        int64(i),
-			IsLast:            i == totalChunks-1,
-			Term:              int64(rf.currentTerm),
-			LeaderId:          int64(rf.id),
-			LastIncludedIndex: int64(rf.lastIncludedIndex),
-			LastIncludedTerm:  int64(rf.lastIncludedTerm),
+			Data:       snapshot[i:end],
+			ChunkIndex: int64(i / chunkSize),
+			IsLast:     end == len(snapshot),
 		}
 
 		if err := stream.Send(chunk); err != nil {
-			log.Printf("Error enviando chunk %d: %v", i, err)
+			log.Printf("Error enviando chunk %d a %d: %v", i/chunkSize, peer.ID, err)
 			return
 		}
 	}
 
-	// Recibir ACK
+	// Recibir confirmación
 	ack, err := stream.CloseAndRecv()
 	if err != nil || !ack.Success {
-		log.Printf("Snapshot fallido en peer %d", peer.ID)
+		log.Printf("Snapshot a %d falló: %v", peer.ID, err)
+		rf.nextIndex[peer.ID] = rf.lastIncludedIndex // Retroceder índice
+	} else {
+		rf.matchIndex[peer.ID] = rf.lastIncludedIndex
+		rf.nextIndex[peer.ID] = rf.lastIncludedIndex + 1
 	}
-}
-
-func (ns *NetworkService) InstallSnapshot(stream pb.RaftService_InstallSnapshotServer) error {
-	var (
-		buffer      bytes.Buffer
-		lastIndex   int64
-		lastTerm    int64
-		currentTerm int64
-	)
-
-	// 1. Recibir y ensamblar chunks del snapshot
-	for {
-		chunk, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error recibiendo chunk: %v", err)
-			return err
-		}
-
-		// Capturar metadatos del primer chunk
-		if chunk.ChunkIndex == 0 {
-			lastIndex = chunk.LastIncludedIndex
-			lastTerm = chunk.LastIncludedTerm
-			currentTerm = chunk.Term
-		}
-
-		buffer.Write(chunk.Data)
-	}
-
-	ns.node.raft.mu.Lock()
-	defer ns.node.raft.mu.Unlock()
-
-	// 2. Validar término del líder
-	if currentTerm < int64(ns.node.raft.currentTerm) {
-		return stream.SendAndClose(&pb.SnapshotAck{Success: false})
-	}
-
-	// 3. Aplicar snapshot y persistir estado
-	if err := ns.node.raft.applySnapshot(buffer.Bytes(), lastIndex, lastTerm); err != nil {
-		log.Printf("Error aplicando snapshot: %v", err)
-		return stream.SendAndClose(&pb.SnapshotAck{Success: false})
-	}
-
-	// 4. Sincronizar índices
-	ns.node.raft.commitIndex = int(lastIndex)
-	ns.node.raft.lastApplied = int(lastIndex)
-
-	// 5. Persistir estado completo
-	if err := ns.node.raft.saveState(); err != nil {
-		log.Printf("Error guardando estado: %v", err)
-	}
-
-	return stream.SendAndClose(&pb.SnapshotAck{
-		Success: true,
-		Term:    int64(ns.node.raft.currentTerm),
-	})
 }
 
 func (rf *Raft) applySnapshot(data []byte, index, term int64) error {
@@ -878,4 +840,171 @@ func (rf *Raft) loadSnapshot() error {
 	}
 
 	return fmt.Errorf("snapshot corrupto")
+}
+
+func (rf *Raft) ProposeCommand(command *pb.FileCommand) error {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if rf.state != Leader {
+		return errors.New("no soy el líder")
+	}
+
+	entry := LogEntry{
+		Term:    rf.currentTerm,
+		Command: command,
+	}
+	rf.log = append(rf.log, entry)
+	rf.saveState() // Persistir el nuevo estado del log
+
+	// Replicar a los seguidores
+	go rf.sendHeartbeats()
+
+	return nil
+}
+
+func (rf *Raft) getLastLogInfo() (index int, term int) {
+	if len(rf.log) == 0 {
+		return rf.lastIncludedIndex, rf.lastIncludedTerm
+	}
+	lastEntry := rf.log[len(rf.log)-1]
+	return rf.lastIncludedIndex + len(rf.log), lastEntry.Term
+}
+
+func (rf *Raft) applyEntries(req *pb.AppendRequest) bool {
+	prevIndex := int(req.PrevLogIndex) - rf.lastIncludedIndex
+
+	// Caso 1: Índice previo está en el snapshot
+	if prevIndex < 0 {
+		return false
+	}
+
+	// Caso 2: Índice previo no existe en el log
+	if prevIndex >= len(rf.log) {
+		return false
+	}
+
+	// Caso 3: Conflicto de términos
+	if rf.log[prevIndex].Term != int(req.PrevLogTerm) {
+		rf.log = rf.log[:prevIndex] // Truncar log
+		return false
+	}
+
+	// Añadir nuevas entradas (eliminando conflictos si existen)
+	newEntries := make([]LogEntry, len(req.Entries))
+	for i, entry := range req.Entries {
+		var cmd pb.FileCommand
+		if err := proto.Unmarshal(entry.Command, &cmd); err != nil {
+			log.Printf("Error deserializando comando: %v", err)
+			return false
+		}
+		newEntries[i] = LogEntry{
+			Term:    int(entry.Term),
+			Command: &cmd,
+		}
+	}
+
+	rf.log = append(rf.log[:prevIndex+1], newEntries...)
+	return true
+}
+
+func (rf *Raft) sendSnapshotToLeader(leaderID int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if rf.state == Leader || leaderID >= len(rf.peers) {
+		return
+	}
+
+	leaderPeer := rf.peers[leaderID]
+	if leaderPeer == nil || leaderPeer.client == nil {
+		log.Printf("Líder %d no disponible", leaderID)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	stream, err := leaderPeer.client.InstallSnapshot(ctx)
+	if err != nil {
+		log.Printf("Error solicitando snapshot: %v", err)
+		return
+	}
+
+	var (
+		snapshot          bytes.Buffer
+		lastIncludedIndex int64
+		lastIncludedTerm  int64
+	)
+
+	for {
+		chunk := &pb.SnapshotChunk{}
+		err := stream.RecvMsg(chunk)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Printf("Error recibiendo chunk: %v", err)
+			return
+		}
+
+		if chunk.IsLast {
+			lastIncludedIndex = chunk.LastIncludedIndex
+			lastIncludedTerm = chunk.LastIncludedTerm
+		}
+
+		snapshot.Write(chunk.Data)
+	}
+
+	if err := rf.applySnapshot(snapshot.Bytes(), lastIncludedIndex, lastIncludedTerm); err != nil {
+		log.Printf("Error aplicando snapshot: %v", err)
+		return
+	}
+
+	// Actualizar índices con los valores del líder
+	rf.lastIncludedIndex = int(lastIncludedIndex)
+	rf.lastIncludedTerm = int(lastIncludedTerm)
+	rf.nextIndex[rf.id] = rf.lastIncludedIndex + 1
+	rf.matchIndex[rf.id] = rf.lastIncludedIndex
+}
+
+func (rf *Raft) applyCommits() {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		rf.mu.Lock()
+		if rf.commitIndex > rf.lastApplied {
+			rf.applyLogs() // Función ya existente en raft.go
+		}
+		rf.mu.Unlock()
+	}
+}
+
+func (rf *Raft) persistState() {
+	rf.saveState() // Función ya implementada en raft.go
+}
+
+func (rf *Raft) loadUnappliedLogs() error {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	// Solo cargar logs posteriores al último aplicado
+	startIdx := rf.lastApplied - rf.lastIncludedIndex
+	if startIdx < 0 {
+		startIdx = 0
+	}
+
+	// Cargar logs desde meta.json y log.bin (lógica existente en loadState)
+	return rf.loadState()
+}
+
+func (rf *Raft) checkQuorum() bool {
+	activePeers := 0
+	for _, peer := range rf.peers {
+		if peer.IsActive() {
+			activePeers++
+		}
+	}
+	return activePeers >= len(rf.peers)/2+1
 }

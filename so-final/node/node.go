@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	//"google.golang.org/protobuf/proto"
 )
 
 type Node struct {
@@ -25,6 +26,23 @@ type Node struct {
 	fileMgr     *FileManager
 	snapshotter *SnapshotManager
 	mu          sync.RWMutex
+}
+
+// Cleanup removes old snapshots or performs necessary cleanup tasks.
+func (sm *SnapshotManager) Cleanup() {
+	// Example cleanup logic: remove old snapshots
+	files, err := os.ReadDir(sm.snapshotPath)
+	if err != nil {
+		log.Printf("Error reading snapshot directory: %v", err)
+		return
+	}
+
+	for _, file := range files {
+		filePath := filepath.Join(sm.snapshotPath, file.Name())
+		if err := os.Remove(filePath); err != nil {
+			log.Printf("Error removing snapshot file %s: %v", filePath, err)
+		}
+	}
 }
 
 func NewNode(id int, address string, peers []*Peer) *Node {
@@ -131,12 +149,17 @@ func (n *Node) bootstrapCluster() {
 	defer cancel()
 
 	for _, peer := range n.raft.peers {
-		if _, err := peer.client.JoinCluster(ctx, &pb.JoinRequest{
+		// Enviar JoinRequest con el LastIndex correcto
+		req := &pb.JoinRequest{
 			NodeId:    int64(n.ID),
 			Address:   n.Address,
 			LastIndex: int64(n.raft.lastApplied),
-		}); err != nil {
+		}
+
+		// Manejar errores de conexión
+		if _, err := peer.client.JoinCluster(ctx, req); err != nil {
 			log.Printf("Error uniendo al cluster: %v", err)
+			go peer.Reconnect() // Reconexión automática
 		}
 	}
 }

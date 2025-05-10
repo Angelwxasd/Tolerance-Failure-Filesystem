@@ -32,7 +32,7 @@ const (
 type RaftServiceClient interface {
 	RequestVote(ctx context.Context, in *VoteRequest, opts ...grpc.CallOption) (*VoteResponse, error)
 	AppendEntries(ctx context.Context, in *AppendRequest, opts ...grpc.CallOption) (*AppendResponse, error)
-	TransferFile(ctx context.Context, in *FileCommand, opts ...grpc.CallOption) (*TransferResponse, error)
+	TransferFile(ctx context.Context, in *FileData, opts ...grpc.CallOption) (*TransferResponse, error)
 	InstallSnapshot(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[SnapshotChunk, SnapshotAck], error)
 	JoinCluster(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*JoinResponse, error)
 }
@@ -65,7 +65,7 @@ func (c *raftServiceClient) AppendEntries(ctx context.Context, in *AppendRequest
 	return out, nil
 }
 
-func (c *raftServiceClient) TransferFile(ctx context.Context, in *FileCommand, opts ...grpc.CallOption) (*TransferResponse, error) {
+func (c *raftServiceClient) TransferFile(ctx context.Context, in *FileData, opts ...grpc.CallOption) (*TransferResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TransferResponse)
 	err := c.cc.Invoke(ctx, RaftService_TransferFile_FullMethodName, in, out, cOpts...)
@@ -104,7 +104,7 @@ func (c *raftServiceClient) JoinCluster(ctx context.Context, in *JoinRequest, op
 type RaftServiceServer interface {
 	RequestVote(context.Context, *VoteRequest) (*VoteResponse, error)
 	AppendEntries(context.Context, *AppendRequest) (*AppendResponse, error)
-	TransferFile(context.Context, *FileCommand) (*TransferResponse, error)
+	TransferFile(context.Context, *FileData) (*TransferResponse, error)
 	InstallSnapshot(grpc.ClientStreamingServer[SnapshotChunk, SnapshotAck]) error
 	JoinCluster(context.Context, *JoinRequest) (*JoinResponse, error)
 	mustEmbedUnimplementedRaftServiceServer()
@@ -123,7 +123,7 @@ func (UnimplementedRaftServiceServer) RequestVote(context.Context, *VoteRequest)
 func (UnimplementedRaftServiceServer) AppendEntries(context.Context, *AppendRequest) (*AppendResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AppendEntries not implemented")
 }
-func (UnimplementedRaftServiceServer) TransferFile(context.Context, *FileCommand) (*TransferResponse, error) {
+func (UnimplementedRaftServiceServer) TransferFile(context.Context, *FileData) (*TransferResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TransferFile not implemented")
 }
 func (UnimplementedRaftServiceServer) InstallSnapshot(grpc.ClientStreamingServer[SnapshotChunk, SnapshotAck]) error {
@@ -190,7 +190,7 @@ func _RaftService_AppendEntries_Handler(srv interface{}, ctx context.Context, de
 }
 
 func _RaftService_TransferFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(FileCommand)
+	in := new(FileData)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -202,7 +202,7 @@ func _RaftService_TransferFile_Handler(srv interface{}, ctx context.Context, dec
 		FullMethod: RaftService_TransferFile_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RaftServiceServer).TransferFile(ctx, req.(*FileCommand))
+		return srv.(RaftServiceServer).TransferFile(ctx, req.(*FileData))
 	}
 	return interceptor(ctx, in, info, handler)
 }

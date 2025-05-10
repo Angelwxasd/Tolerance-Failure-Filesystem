@@ -19,7 +19,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
-	"google.golang.org/protobuf/proto"
+	//"google.golang.org/protobuf/proto"
 )
 
 // ==================== Service Implementation ====================
@@ -83,9 +83,17 @@ func NewPeer(id int, address string) (*Peer, error) {
 	}
 
 	// Monitoreo continuo de estado
-	go func() {
+	peer := &Peer{
+		ID:       id,
+		Address:  address,
+		conn:     conn,
+		client:   pb.NewRaftServiceClient(conn),
+		isActive: atomic.Bool{},
+	}
+
+	go func(p *Peer) {
 		for {
-			state := conn.GetState()
+			state := p.conn.GetState()
 			if state == connectivity.TransientFailure || state == connectivity.Shutdown {
 				p.isActive.Store(false)
 			} else {
@@ -93,7 +101,7 @@ func NewPeer(id int, address string) (*Peer, error) {
 			}
 			time.Sleep(2 * time.Second)
 		}
-	}()
+	}(peer)
 
 	return &Peer{
 		ID:       id,
@@ -113,11 +121,10 @@ func (ns *NetworkService) TransferFile(ctx context.Context, req *pb.FileData) (*
 
 	// 2. Crear comando Raft
 	cmd := &pb.FileCommand{
-		Op:         pb.FileCommand_TRANSFER,
-		Path:       req.Filename,
-		Content:    req.Content,
-		Timestamp:  time.Now().UnixNano(),
-		TargetNode: req.TargetNode,
+		Op:      pb.FileCommand_TRANSFER,
+		Path:    req.Filename,
+		Content: req.Content,
+		// Timestamp field removed as it does not exist in FileCommand
 	}
 
 	// 3. Aplicar a través del consenso Raft
@@ -132,10 +139,6 @@ func (ns *NetworkService) TransferFile(ctx context.Context, req *pb.FileData) (*
 }
 
 func (ns *NetworkService) replicateToPeers(cmd *pb.FileCommand) {
-	data, _ := proto.Marshal(&pb.FileData{
-		Filename: cmd.Path,
-		Content:  cmd.Content,
-	})
 
 	for _, peer := range ns.node.raft.peers {
 		if peer.ID == ns.node.raft.id {
@@ -307,4 +310,65 @@ func (fm *FileManager) ValidatePath(path string) bool {
 	// Validar rutas seguras y dentro del directorio base
 	cleanPath := filepath.Clean(path)
 	return filepath.IsAbs(cleanPath) && strings.HasPrefix(cleanPath, fm.baseDir)
+}
+
+func (fm *FileManager) Sync() {
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
+
+	// Ejemplo: Sincronizar directorio base
+	if dir, err := os.Open(fm.baseDir); err == nil {
+		dir.Sync() // Forzar escritura a disco
+		dir.Close()
+	}
+}
+
+func (p *Peer) Reconnect() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.conn.GetState() == connectivity.Ready {
+		return
+	}
+
+	// Configuración de reconexión (similar a NewPeer)
+	kp := keepalive.ClientParameters{
+		Time:    30 * time.Second,
+		Timeout: 10 * time.Second,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := grpc.DialContext(
+		ctx,
+		p.Address,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithKeepaliveParams(kp),
+	)
+
+	if err == nil {
+		p.conn = conn
+		p.client = pb.NewRaftServiceClient(conn)
+		p.isActive.Store(true)
+	}
+}
+
+func (ns *NetworkService) JoinCluster(ctx context.Context, req *pb.JoinRequest) (*pb.JoinResponse, error) {
+	ns.node.raft.mu.Lock()
+	defer ns.node.raft.mu.Unlock()
+
+	// Lógica para añadir nuevo nodo al cluster
+	newPeer, err := NewPeer(int(req.NodeId), req.Address)
+	if err != nil {
+		return &pb.JoinResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	ns.node.raft.peers = append(ns.node.raft.peers, newPeer)
+	log.Printf("Nodo %d (%s) unido al cluster", req.NodeId, req.Address)
+
+	return &pb.JoinResponse{
+		Success: true,
+		Message: fmt.Sprintf("Nodo %d registrado exitosamente", req.NodeId),
+	}, nil
 }
