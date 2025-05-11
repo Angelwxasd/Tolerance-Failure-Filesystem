@@ -12,6 +12,8 @@ import (
 
 	pb "so-final/proto"
 
+	"net/http" // Para el manejo de errores HTTP, debido a su facilidad
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -90,6 +92,35 @@ func (n *Node) Start() error {
 	go n.raft.applyCommits()
 	go n.monitorPeerConnections()
 	go n.snapshotter.AutoSnapshot(30 * time.Minute)
+
+	// ===== [NUEVO] Iniciar servidor HTTP para métricas =====
+	go func() {
+		http.HandleFunc("/raft-state", func(w http.ResponseWriter, r *http.Request) { // <-- Añadir paréntesis aquí
+			n.raft.mu.Lock()
+			defer n.raft.mu.Unlock()
+
+			state := "Follower"
+			switch n.raft.state {
+			case Leader:
+				state = "Leader"
+			case Candidate:
+				state = "Candidate"
+			}
+
+			response := fmt.Sprintf(
+				"Nodo ID: %d\nEstado: %s\nTérmino: %d\nLíder: %d\nCommit Index: %d\nLast Applied: %d",
+				n.ID, state, n.raft.currentTerm, n.raft.leaderId, n.raft.commitIndex, n.raft.lastApplied,
+			)
+
+			w.Header().Set("Content-Type", "text/plain")
+			w.Write([]byte(response))
+		}) // <-- Paréntesis faltante aquí
+
+		log.Printf("[Nodo %d] Métricas HTTP en :8080", n.ID)
+		if err := http.ListenAndServe(":8080", nil); err != nil {
+			log.Printf("[Nodo %d] Error en servidor HTTP: %v", n.ID, err)
+		}
+	}()
 
 	// 3. Registrar nodo en el cluster
 	n.bootstrapCluster()

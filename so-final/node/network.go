@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -327,31 +328,49 @@ func (p *Peer) Reconnect() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.conn.GetState() == connectivity.Ready {
+	if p.conn != nil && p.conn.GetState() == connectivity.Ready {
 		return
 	}
 
-	// Configuración de reconexión (similar a NewPeer)
+	maxRetries := 5
+	baseDelay := 2 * time.Second
 	kp := keepalive.ClientParameters{
 		Time:    30 * time.Second,
-		Timeout: 10 * time.Second,
+		Timeout: 15 * time.Second,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	for i := 0; i < maxRetries; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 
-	conn, err := grpc.DialContext(
-		ctx,
-		p.Address,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithKeepaliveParams(kp),
-	)
+		// Intentar conexión con parámetros optimizados
+		conn, err := grpc.DialContext(
+			ctx,
+			p.Address,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithKeepaliveParams(kp),
+			grpc.WithBlock(),
+		)
 
-	if err == nil {
-		p.conn = conn
-		p.client = pb.NewRaftServiceClient(conn)
-		p.isActive.Store(true)
+		if err == nil {
+			p.conn = conn
+			p.client = pb.NewRaftServiceClient(conn)
+			p.isActive.Store(true)
+			log.Printf("Conexión restablecida con %s", p.Address)
+			return
+		}
+
+		// Calcular y aplicar backoff exponencial
+		delay := time.Duration(math.Pow(2, float64(i))) * baseDelay
+		log.Printf("Reintentando conexión a %s en %v (intento %d/%d)",
+			p.Address, delay, i+1, maxRetries)
+
+		time.Sleep(delay)
 	}
+
+	log.Printf("Fallo permanente de conexión a %s después de %d intentos",
+		p.Address, maxRetries)
+	p.isActive.Store(false)
 }
 
 func (ns *NetworkService) JoinCluster(ctx context.Context, req *pb.JoinRequest) (*pb.JoinResponse, error) {

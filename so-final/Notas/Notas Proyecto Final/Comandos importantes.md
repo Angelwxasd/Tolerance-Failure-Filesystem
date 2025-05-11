@@ -51,3 +51,13 @@ func (rf *Raft) loadState() error {
 
 
  d
+
+
+     Verifica que el servidor HTTP inicia:
+
+
+docker-compose logs node1 | grep "Métricas HTTP"
+# Debe mostrar: "[Nodo 1] Métricas HTTP en :8080"
+
+    Pueba de Métricas:
+curl http://localhost:8081/raft-state

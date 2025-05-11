@@ -198,6 +198,11 @@ func (rf *Raft) loadState() error {
 	metaPath := path.Join(dataDir, "meta.json")
 	logPath := path.Join(dataDir, "log.bin")
 
+	// Crear directorio si no existe
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return fmt.Errorf("error al crear directorio de datos: %v", err)
+	}
+
 	// Cargar meta datos
 	if _, err := os.Stat(metaPath); err == nil {
 		metaJSON, err := os.ReadFile(metaPath)
@@ -360,6 +365,7 @@ func (rf *Raft) sendHeartbeats() {
 
 	for rf.state == Leader {
 		rf.mu.Lock()
+		defer rf.mu.Unlock() // Siempre liberar el mutex
 		currentTerm := rf.currentTerm
 		lastIncludedIndex := rf.lastIncludedIndex
 		savedPeers := make([]*Peer, len(rf.peers))
@@ -374,6 +380,7 @@ func (rf *Raft) sendHeartbeats() {
 
 			go func(p *Peer) {
 				rf.mu.Lock()
+				defer rf.mu.Unlock() // Siempre liberar el mutex
 
 				// 1. Obtener y validar nextIndex
 				nextIdx := rf.nextIndex[p.ID]
@@ -822,6 +829,16 @@ func (rf *Raft) saveSnapshot(data []byte) error {
 
 func (rf *Raft) loadSnapshot() error {
 	snapshotPath := filepath.Join(os.Getenv("RAFT_DATA_DIR"), fmt.Sprintf("node%d/snapshot.bin", rf.id))
+
+	// Si no existe el snapshot, inicializar estado vacío
+	if _, err := os.Stat(snapshotPath); os.IsNotExist(err) {
+		log.Printf("Snapshot no encontrado. Inicializando estado desde cero.")
+		rf.lastIncludedIndex = 0
+		rf.lastIncludedTerm = 0
+		rf.log = []LogEntry{}
+		return nil
+	}
+
 	data, err := os.ReadFile(snapshotPath)
 	if err != nil {
 		return err

@@ -23,23 +23,34 @@ func main() {
 	os.Setenv("RAFT_DATA_DIR", raftDataDir)
 
 	peers := make([]*node.Peer, 0) // <- Cambiar a slice de punteros
-	addresses := strings.Split(peerAddrs, ",")
-	for _, addr := range addresses {
-		// Extraer el último octeto de la IP para obtener el ID
-		ipParts := strings.Split(addr, ":")
-		ipOnly := ipParts[0] // "172.20.0.2"
-		ipOctets := strings.Split(ipOnly, ".")
-		idStr := ipOctets[len(ipOctets)-1] // "2"
-		id, err := strconv.Atoi(idStr)
-		if err != nil {
-			log.Printf("Dirección inválida: %s", addr)
-			continue // Saltar peer inválido
+	addresses := strings.SplitSeq(peerAddrs, ",")
+	for addr := range addresses {
+		// Nuevo formato esperado: "ID@host:puerto" (ej: "2@node2:50051")
+		parts := strings.Split(addr, "@")
+
+		// Validar formato
+		if len(parts) != 2 {
+			log.Printf("Formato inválido en dirección peer: %s. Se esperaba 'ID@host:puerto'", addr)
+			continue
 		}
-		peer, err := node.NewPeer(id, addr)
+
+		// Obtener ID desde la primera parte
+		id, err := strconv.Atoi(parts[0])
 		if err != nil {
-			log.Printf("Error al conectar con peer %s: %v", addr, err)
-			continue // Saltar peer inválido
+			log.Printf("ID no numérico en peer %s: %v", addr, err)
+			continue
 		}
+
+		// Obtener dirección real (segunda parte)
+		peerAddress := parts[1]
+
+		// Crear peer con ID explícito y dirección
+		peer, err := node.NewPeer(id, peerAddress)
+		if err != nil {
+			log.Printf("Error creando peer %d (%s): %v", id, peerAddress, err)
+			continue
+		}
+
 		peers = append(peers, peer)
 	}
 

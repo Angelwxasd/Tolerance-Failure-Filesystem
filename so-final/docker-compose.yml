@@ -1,9 +1,6 @@
 networks:
   raft-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16  # Subred personalizada para IPs fijas
 
 volumes:
   node1_data:
@@ -22,14 +19,14 @@ services:
       dockerfile: docker/Dockerfile
     environment:
       - NODE_ID=1
-      - NODE_ADDR=172.20.0.2:50051  # Asignar IP fija
-      - PEER_ADDRS=172.20.0.3:50051,172.20.0.4:50051,172.20.0.5:50051
-      - RAFT_DATA_DIR=/app/raft-data  # Ruta para persistir datos de Raft
+      - NODE_ADDR=node1:50051  # Usar nombre del servicio
+      - PEER_ADDRS=2@node2:50051,3@node3:50051,4@node4:50051  # Formato ID@servicio:puerto
+      - RAFT_DATA_DIR=/app/raft-data
     networks:
-      raft-network:
-        ipv4_address: 172.20.0.2  # Asignar IP fija
+      - raft-network
     ports:
       - "50051:50051"
+      - "8081:8080"     # Métricas HTTP
     volumes:
       - node1_data:/app/files
       - raft1_data:/app/raft-data
@@ -40,14 +37,14 @@ services:
       dockerfile: docker/Dockerfile
     environment:
       - NODE_ID=2
-      - NODE_ADDR=172.20.0.3:50051
-      - PEER_ADDRS=172.20.0.2:50051,172.20.0.4:50051,172.20.0.5:50051
+      - NODE_ADDR=node2:50051
+      - PEER_ADDRS=1@node1:50051,3@node3:50051,4@node4:50051
       - RAFT_DATA_DIR=/app/raft-data
     networks:
-      raft-network:
-        ipv4_address: 172.20.0.3
+      - raft-network
     ports:
       - "50052:50051"
+      - "8082:8080"     # Métricas HTTP
     volumes:
       - node2_data:/app/files
       - raft2_data:/app/raft-data
@@ -58,14 +55,14 @@ services:
       dockerfile: docker/Dockerfile
     environment:
       - NODE_ID=3
-      - NODE_ADDR=172.20.0.4:50051
-      - PEER_ADDRS=172.20.0.2:50051,172.20.0.3:50051,172.20.0.5:50051
+      - NODE_ADDR=node3:50051
+      - PEER_ADDRS=1@node1:50051,2@node2:50051,4@node4:50051
       - RAFT_DATA_DIR=/app/raft-data
     networks:
-      raft-network:
-        ipv4_address: 172.20.0.4
+      - raft-network
     ports:
       - "50053:50051"
+      - "8083:8080"     # Métricas HTTP
     volumes:
       - node3_data:/app/files
       - raft3_data:/app/raft-data
@@ -76,14 +73,14 @@ services:
       dockerfile: docker/Dockerfile
     environment:
       - NODE_ID=4
-      - NODE_ADDR=172.20.0.5:50051
-      - PEER_ADDRS=172.20.0.2:50051,172.20.0.3:50051,172.20.0.4:50051
+      - NODE_ADDR=node4:50051
+      - PEER_ADDRS=1@node1:50051,2@node2:50051,3@node3:50051
       - RAFT_DATA_DIR=/app/raft-data
     networks:
-      raft-network:
-        ipv4_address: 172.20.0.5
+      - raft-network
     ports:
       - "50054:50051"
+      - "8084:8080"     # Métricas HTTP
     volumes:
       - node4_data:/app/files
       - raft4_data:/app/raft-data
