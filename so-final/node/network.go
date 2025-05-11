@@ -46,7 +46,6 @@ func NewPeer(id int, address string) (*Peer, error) {
 		err  error
 	)
 
-	// Configuración robusta de conexión
 	kp := keepalive.ClientParameters{
 		Time:                30 * time.Second,
 		Timeout:             10 * time.Second,
@@ -58,7 +57,6 @@ func NewPeer(id int, address string) (*Peer, error) {
 
 	for i := 0; i < maxRetries; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
 
 		conn, err = grpc.DialContext(
 			ctx,
@@ -67,13 +65,14 @@ func NewPeer(id int, address string) (*Peer, error) {
 			grpc.WithKeepaliveParams(kp),
 			grpc.WithBlock(),
 		)
+		cancel() // Liberar contexto inmediatamente
 
 		if err == nil && conn.GetState() == connectivity.Ready {
 			break
 		}
 
 		if i < maxRetries-1 {
-			retryDelay := baseDelay * time.Duration(1<<uint(i))
+			retryDelay := baseDelay * (1 << i) // Backoff exponencial
 			log.Printf("Reintentando conexión a %s en %v", address, retryDelay)
 			time.Sleep(retryDelay)
 		}
@@ -83,7 +82,6 @@ func NewPeer(id int, address string) (*Peer, error) {
 		return nil, fmt.Errorf("fallo conexión a %s: %v", address, err)
 	}
 
-	// Monitoreo continuo de estado
 	peer := &Peer{
 		ID:       id,
 		Address:  address,
@@ -91,26 +89,17 @@ func NewPeer(id int, address string) (*Peer, error) {
 		client:   pb.NewRaftServiceClient(conn),
 		isActive: atomic.Bool{},
 	}
+	peer.isActive.Store(true) // Estado inicial: activo
 
-	go func(p *Peer) {
+	go func() {
 		for {
-			state := p.conn.GetState()
-			if state == connectivity.TransientFailure || state == connectivity.Shutdown {
-				p.isActive.Store(false)
-			} else {
-				p.isActive.Store(true)
-			}
+			state := peer.conn.GetState()
+			peer.isActive.Store(state == connectivity.Ready)
 			time.Sleep(2 * time.Second)
 		}
-	}(peer)
+	}()
 
-	return &Peer{
-		ID:       id,
-		Address:  address,
-		conn:     conn,
-		client:   pb.NewRaftServiceClient(conn),
-		isActive: atomic.Bool{},
-	}, nil
+	return peer, nil
 }
 
 // ==================== Core RPC Handlers ====================

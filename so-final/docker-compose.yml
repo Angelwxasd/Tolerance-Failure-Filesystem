@@ -1,6 +1,7 @@
 networks:
   raft-network:
     driver: bridge
+    attachable: true
 
 volumes:
   node1_data:
@@ -19,17 +20,22 @@ services:
       dockerfile: docker/Dockerfile
     environment:
       - NODE_ID=1
-      - NODE_ADDR=node1:50051  # Usar nombre del servicio
-      - PEER_ADDRS=2@node2:50051,3@node3:50051,4@node4:50051  # Formato ID@servicio:puerto
+      - NODE_ADDR=node1:50051
+      - PEER_ADDRS=2@node2:50051,3@node3:50051,4@node4:50051
       - RAFT_DATA_DIR=/app/raft-data
     networks:
       - raft-network
     ports:
-      - "50051:50051"
-      - "8081:8080"     # Métricas HTTP
+      - "8081:8080"
+     # - "50051:50051"  # Exponer puerto gRPC (solo para pruebas)
     volumes:
       - node1_data:/app/files
       - raft1_data:/app/raft-data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8080"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
 
   node2:
     build:
@@ -43,11 +49,16 @@ services:
     networks:
       - raft-network
     ports:
-      - "50052:50051"
-      - "8082:8080"     # Métricas HTTP
+      - "8082:8080"
+    #  - "50052:50051"  # Exponer puerto gRPC (solo para pruebas)
     volumes:
       - node2_data:/app/files
       - raft2_data:/app/raft-data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8080"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
 
   node3:
     build:
@@ -61,11 +72,16 @@ services:
     networks:
       - raft-network
     ports:
-      - "50053:50051"
-      - "8083:8080"     # Métricas HTTP
+      - "8083:8080"
+    #  - "50053:50051"  # Exponer puerto gRPC (solo para pruebas)
     volumes:
       - node3_data:/app/files
       - raft3_data:/app/raft-data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8080"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
 
   node4:
     build:
@@ -79,8 +95,13 @@ services:
     networks:
       - raft-network
     ports:
-      - "50054:50051"
-      - "8084:8080"     # Métricas HTTP
+      - "8084:8080"
+    #  - "50054:50051"  # Exponer puerto gRPC (solo para pruebas)
     volumes:
       - node4_data:/app/files
       - raft4_data:/app/raft-data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8080"]
+      interval: 15s
+      timeout: 10s
+      retries: 3

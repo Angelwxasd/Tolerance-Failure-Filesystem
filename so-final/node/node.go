@@ -82,7 +82,7 @@ func NewNode(id int, address string, peers []*Peer) *Node {
 
 func (n *Node) Start() error {
 	// 1. Iniciar listener de red
-	lis, err := net.Listen("tcp", n.Address)
+	lis, err := net.Listen("tcp", "0.0.0.0:50051")
 	if err != nil {
 		return fmt.Errorf("error al iniciar listener: %v", err)
 	}

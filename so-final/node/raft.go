@@ -85,47 +85,124 @@ func NewRaft(id int, peers []*Peer) *Raft {
 	if peers == nil {
 		log.Fatal("La lista de peers no puede ser nil")
 	}
+
 	rf := &Raft{
 		id:                id,
 		currentTerm:       0,
 		votedFor:          -1,
 		state:             Follower,
 		log:               make([]LogEntry, 0),
-		peers:             peers, // Inicializar con peers reales
+		peers:             peers,
 		nextIndex:         make([]int, len(peers)),
 		matchIndex:        make([]int, len(peers)),
 		lastIncludedIndex: 0,
 		lastIncludedTerm:  0,
 		snapshot:          make([]byte, 0),
+		snapshotLock:      sync.Mutex{}, // Asegurar mutex para snapshots
 	}
 
-	// 🔄 CAMBIO: Cargar snapshot antes que el estado
+	// 1. Cargar snapshot SIN bloquear el mutex principal
 	if err := rf.loadSnapshot(); err != nil {
-		log.Printf("Error cargando snapshot: %v", err)
+		log.Printf("Error inicial cargando snapshot: %v", err)
 	}
 
-	// 🔄 CAMBIO: Ajustar índices del log después de cargar snapshot
-	rf.commitIndex = rf.lastIncludedIndex
-	rf.lastApplied = rf.lastIncludedIndex
+	// 2. Cargar estado persistente (meta.json y logs)
+	rf.mu.Lock() // Bloquear solo para operaciones con el estado principal
+	defer rf.mu.Unlock()
 
-	// ✅ Inicializar nextIndex con la longitud del log
-	for i := range rf.nextIndex {
-		rf.nextIndex[i] = rf.lastIncludedIndex + 1
+	// 3. Ajustar índices después de cargar datos persistentes
+	if rf.lastIncludedIndex > 0 {
+		rf.commitIndex = rf.lastIncludedIndex
+		rf.lastApplied = rf.lastIncludedIndex
+		for i := range rf.nextIndex {
+			rf.nextIndex[i] = rf.lastIncludedIndex + 1
+		}
 	}
 
-	if err := rf.loadState(); err != nil {
-		log.Printf("Error al cargar estado Raft: %v", err)
+	// 4. Cargar logs no aplicados SIN bloquear recursivamente
+	if err := rf.loadStateInternal(); err != nil { // Función modificada
+		log.Printf("Error cargando estado: %v", err)
 	}
 
+	// 5. Inicializar timer de elección
 	rf.resetElectionTimer()
 
-	// Forzar guardado inicial
+	// 6. Guardado inicial asíncrono
 	go func() {
 		time.Sleep(1 * time.Second)
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
 		rf.saveState()
 	}()
 
 	return rf
+}
+
+// loadStateInternal carga el estado persistente (meta.json y log.bin) sin bloquear el mutex principal.
+// Es una versión modificada de loadState() original, pero evita recursividad con loadSnapshot().
+func (rf *Raft) loadStateInternal() error {
+	dataDir := filepath.Join(os.Getenv("RAFT_DATA_DIR"), fmt.Sprintf("node%d", rf.id))
+
+	// 1. Cargar meta.json (término actual, votos, etc.)
+	metaPath := path.Join(dataDir, "meta.json")
+	if _, err := os.Stat(metaPath); err == nil {
+		metaJSON, err := os.ReadFile(metaPath)
+		if err != nil {
+			return fmt.Errorf("error leyendo meta.json: %v", err)
+		}
+
+		var meta struct {
+			CurrentTerm int
+			VotedFor    int
+			CommitIndex int
+			LastApplied int
+		}
+
+		if err := json.Unmarshal(metaJSON, &meta); err != nil {
+			return fmt.Errorf("error deserializando meta.json: %v", err)
+		}
+
+		// Asignar valores SIN bloquear el mutex (ya bloqueado en NewRaft)
+		rf.currentTerm = meta.CurrentTerm
+		rf.votedFor = meta.VotedFor
+		rf.commitIndex = meta.CommitIndex
+		rf.lastApplied = meta.LastApplied
+	}
+
+	// 2. Cargar log.bin (entradas no aplicadas)
+	logPath := path.Join(dataDir, "log.bin")
+	if _, err := os.Stat(logPath); err == nil {
+		logContent, err := os.ReadFile(logPath)
+		if err != nil {
+			return fmt.Errorf("error leyendo log.bin: %v", err)
+		}
+
+		lines := strings.Split(string(logContent), "\n")
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+
+			var entry pb.LogEntry
+			if err := proto.Unmarshal([]byte(line), &entry); err != nil {
+				log.Printf("Error deserializando log: %v", err)
+				continue
+			}
+
+			cmd := &pb.FileCommand{}
+			if err := proto.Unmarshal(entry.Command, cmd); err != nil {
+				log.Printf("Error deserializando comando: %v", err)
+				continue
+			}
+
+			rf.log = append(rf.log, LogEntry{
+				Term:    int(entry.Term),
+				Command: cmd,
+			})
+		}
+	}
+
+	return nil
 }
 
 // En raft.go
@@ -828,6 +905,10 @@ func (rf *Raft) saveSnapshot(data []byte) error {
 }
 
 func (rf *Raft) loadSnapshot() error {
+
+	rf.snapshotLock.Lock() // Usar un mutex específico para snapshots
+	defer rf.snapshotLock.Unlock()
+
 	snapshotPath := filepath.Join(os.Getenv("RAFT_DATA_DIR"), fmt.Sprintf("node%d/snapshot.bin", rf.id))
 
 	// Si no existe el snapshot, inicializar estado vacío

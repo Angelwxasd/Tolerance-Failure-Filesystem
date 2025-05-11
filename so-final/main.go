@@ -22,9 +22,9 @@ func main() {
 	}
 	os.Setenv("RAFT_DATA_DIR", raftDataDir)
 
-	peers := make([]*node.Peer, 0) // <- Cambiar a slice de punteros
-	addresses := strings.SplitSeq(peerAddrs, ",")
-	for addr := range addresses {
+	peers := make([]*node.Peer, 0)             // <- Cambiar a slice de punteros
+	addresses := strings.Split(peerAddrs, ",") // Usar Split estándar
+	for _, addr := range addresses {           // Iterar sobre valores, no índices
 		// Nuevo formato esperado: "ID@host:puerto" (ej: "2@node2:50051")
 		parts := strings.Split(addr, "@")
 
