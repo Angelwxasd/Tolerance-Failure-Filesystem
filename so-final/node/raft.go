@@ -106,10 +106,6 @@ func NewRaft(id int, peers []*Peer) *Raft {
 		log.Printf("Error inicial cargando snapshot: %v", err)
 	}
 
-	// 2. Cargar estado persistente (meta.json y logs)
-	rf.mu.Lock() // Bloquear solo para operaciones con el estado principal
-	defer rf.mu.Unlock()
-
 	// 3. Ajustar índices después de cargar datos persistentes
 	if rf.lastIncludedIndex > 0 {
 		rf.commitIndex = rf.lastIncludedIndex
@@ -119,10 +115,11 @@ func NewRaft(id int, peers []*Peer) *Raft {
 		}
 	}
 
-	// 4. Cargar logs no aplicados SIN bloquear recursivamente
-	if err := rf.loadStateInternal(); err != nil { // Función modificada
-		log.Printf("Error cargando estado: %v", err)
-	}
+	go func() {
+		if err := rf.loadStateInternal(); err != nil {
+			log.Printf("Error cargando estado: %v", err)
+		}
+	}()
 
 	// 5. Inicializar timer de elección
 	rf.resetElectionTimer()

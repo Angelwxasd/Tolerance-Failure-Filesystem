@@ -56,24 +56,27 @@ func NewPeer(id int, address string) (*Peer, error) {
 	baseDelay := 1 * time.Second
 
 	for i := 0; i < maxRetries; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		log.Printf("Intentando conexión a %s (intento %d/%d)", address, i+1, maxRetries) // <- Log de intentos
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 
 		conn, err = grpc.DialContext(
 			ctx,
 			address,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 			grpc.WithKeepaliveParams(kp),
+			grpc.WithDefaultServiceConfig(`{"loadBalancingConfig": [{"round_robin":{}}]}`), // <- Añadido
 			grpc.WithBlock(),
 		)
-		cancel() // Liberar contexto inmediatamente
+		cancel()
 
 		if err == nil && conn.GetState() == connectivity.Ready {
+			log.Printf("Conexión exitosa a %s (estado: %v)", address, conn.GetState()) // <- Log de éxito
 			break
 		}
 
 		if i < maxRetries-1 {
-			retryDelay := baseDelay * (1 << i) // Backoff exponencial
-			log.Printf("Reintentando conexión a %s en %v", address, retryDelay)
+			retryDelay := baseDelay * (1 << i)
+			log.Printf("Error conectando a %s: %v. Reintentando en %v", address, err, retryDelay) // <- Log de error
 			time.Sleep(retryDelay)
 		}
 	}

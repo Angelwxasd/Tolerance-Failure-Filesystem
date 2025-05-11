@@ -22,6 +22,9 @@ https://github.com/debajyotidasgupta/raft-consensus
 #### Iniciar todos los servicios en segundo plano
     docker-compose up -d
 
+#### Ejecutar los 4 nodos
+    docker-compose up --build
+
 #### Detener y eliminar contenedores, redes y volúmenes
     docker-compose down -v
 

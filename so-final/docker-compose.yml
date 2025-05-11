@@ -2,6 +2,9 @@ networks:
   raft-network:
     driver: bridge
     attachable: true
+    driver_opts:
+      com.docker.network.enable_ipv6: "false"
+      com.docker.network.bridge.enable_icc: "true"
 
 volumes:
   node1_data:
@@ -23,16 +26,16 @@ services:
       - NODE_ADDR=node1:50051
       - PEER_ADDRS=2@node2:50051,3@node3:50051,4@node4:50051
       - RAFT_DATA_DIR=/app/raft-data
+      - PEER_CONNECTION_RETRIES=5
     networks:
       - raft-network
     ports:
       - "8081:8080"
-     # - "50051:50051"  # Exponer puerto gRPC (solo para pruebas)
     volumes:
       - node1_data:/app/files
       - raft1_data:/app/raft-data
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "8080"]
+      test: ["CMD", "sh", "-c", "nc -z localhost 50051 && curl --fail http://localhost:8080/raft-state"]
       interval: 15s
       timeout: 10s
       retries: 3
@@ -46,16 +49,16 @@ services:
       - NODE_ADDR=node2:50051
       - PEER_ADDRS=1@node1:50051,3@node3:50051,4@node4:50051
       - RAFT_DATA_DIR=/app/raft-data
+      - PEER_CONNECTION_RETRIES=5
     networks:
       - raft-network
     ports:
       - "8082:8080"
-    #  - "50052:50051"  # Exponer puerto gRPC (solo para pruebas)
     volumes:
       - node2_data:/app/files
       - raft2_data:/app/raft-data
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "8080"]
+      test: ["CMD", "sh", "-c", "nc -z localhost 50051 && curl --fail http://localhost:8080/raft-state"]
       interval: 15s
       timeout: 10s
       retries: 3
@@ -69,16 +72,16 @@ services:
       - NODE_ADDR=node3:50051
       - PEER_ADDRS=1@node1:50051,2@node2:50051,4@node4:50051
       - RAFT_DATA_DIR=/app/raft-data
+      - PEER_CONNECTION_RETRIES=5
     networks:
       - raft-network
     ports:
       - "8083:8080"
-    #  - "50053:50051"  # Exponer puerto gRPC (solo para pruebas)
     volumes:
       - node3_data:/app/files
       - raft3_data:/app/raft-data
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "8080"]
+      test: ["CMD", "sh", "-c", "nc -z localhost 50051 && curl --fail http://localhost:8080/raft-state"]
       interval: 15s
       timeout: 10s
       retries: 3
@@ -92,16 +95,16 @@ services:
       - NODE_ADDR=node4:50051
       - PEER_ADDRS=1@node1:50051,2@node2:50051,3@node3:50051
       - RAFT_DATA_DIR=/app/raft-data
+      - PEER_CONNECTION_RETRIES=5
     networks:
       - raft-network
     ports:
       - "8084:8080"
-    #  - "50054:50051"  # Exponer puerto gRPC (solo para pruebas)
     volumes:
       - node4_data:/app/files
       - raft4_data:/app/raft-data
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "8080"]
+      test: ["CMD", "sh", "-c", "nc -z localhost 50051 && curl --fail http://localhost:8080/raft-state"]
       interval: 15s
       timeout: 10s
       retries: 3

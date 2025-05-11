@@ -123,6 +123,7 @@ func (n *Node) Start() error {
 	}()
 
 	// 3. Registrar nodo en el cluster
+	time.Sleep(10 * time.Second) // Esperar antes de iniciar el bootstrap
 	n.bootstrapCluster()
 
 	log.Printf("[Nodo %d] Operativo en %s", n.ID, n.Address)
