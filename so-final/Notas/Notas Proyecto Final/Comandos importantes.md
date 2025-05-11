@@ -86,7 +86,7 @@ https://github.com/debajyotidasgupta/raft-consensus
 ### Limpiar Recursos
 
 #### Eliminar todos los contenedores, redes, volúmenes e imágenes
-    docker-compose down -v --rmi all
+    docker-compose down --volumes --rmi all --remove-orphans
 
 #### Eliminar imágenes huérfanas
     docker image prune -a
