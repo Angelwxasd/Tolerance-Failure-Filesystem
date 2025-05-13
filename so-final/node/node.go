@@ -4,129 +4,80 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	pb "so-final/proto"
 
-	"net/http" // Para el manejo de errores HTTP, debido a su facilidad
-
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	//"google.golang.org/protobuf/proto"
 )
 
+/* ---------- nodo ---------- */
+
 type Node struct {
-	ID          int
-	Address     string
+	ID      int
+	Address string
+
 	raft        *Raft
 	server      *grpc.Server
 	fileMgr     *FileManager
 	snapshotter *SnapshotManager
-	mu          sync.RWMutex
+
+	mu sync.RWMutex
 }
 
-// Cleanup removes old snapshots or performs necessary cleanup tasks.
-func (sm *SnapshotManager) Cleanup() {
-	// Example cleanup logic: remove old snapshots
-	files, err := os.ReadDir(sm.snapshotPath)
-	if err != nil {
-		log.Printf("Error reading snapshot directory: %v", err)
-		return
-	}
+/* ---------- constructor ---------- */
 
-	for _, file := range files {
-		filePath := filepath.Join(sm.snapshotPath, file.Name())
-		if err := os.Remove(filePath); err != nil {
-			log.Printf("Error removing snapshot file %s: %v", filePath, err)
-		}
-	}
-}
-
-func NewNode(id int, address string, peers []*Peer) *Node {
-	// 1. Inicializar componentes base
+func NewNode(id int, addr string, peers []*Peer) *Node {
 	n := &Node{
 		ID:      id,
-		Address: address,
-		raft:    NewRaft(id, peers),
+		Address: addr,
 		fileMgr: NewFileManager(),
 	}
-
-	// 2. Configurar gestor de snapshots
+	n.raft = NewRaft(id, peers)
 	n.snapshotter = NewSnapshotManager(n)
 
-	// 3. Inicializar servicio de red con dependencias
-	networkService := &NetworkService{
-		node:    n,
-		fileMgr: n.fileMgr,
-	}
-
-	// 4. Configurar servidor gRPC con interceptores
+	svc := &NetworkService{node: n, fileMgr: n.fileMgr}
 	n.server = grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
-			n.connectionStateInterceptor(),
-			n.leaderCheckInterceptor(),
+			n.leaderInterceptor(),
 		),
 	)
-	pb.RegisterRaftServiceServer(n.server, networkService)
+	pb.RegisterRaftServiceServer(n.server, svc)
 
-	// 5. Cargar estado persistente
 	n.loadPersistentState()
-
 	return n
 }
 
+/* ---------- arranque y parada ---------- */
+
 func (n *Node) Start() error {
-	// 1. Iniciar listener de red
-	lis, err := net.Listen("tcp", "0.0.0.0:50051")
+	lis, err := net.Listen("tcp", ":50051") // dentro del contenedor
 	if err != nil {
-		return fmt.Errorf("error al iniciar listener: %v", err)
+		return fmt.Errorf("listener: %w", err)
 	}
 
-	// 2. Iniciar servicios en paralelo
+	// gRPC
 	go n.server.Serve(lis)
-	go n.raft.applyCommits()
-	go n.monitorPeerConnections()
+
+	// snapshots automáticos (cada 30 min)
 	go n.snapshotter.AutoSnapshot(30 * time.Minute)
 
-	// ===== [NUEVO] Iniciar servidor HTTP para métricas =====
-	go func() {
-		http.HandleFunc("/raft-state", func(w http.ResponseWriter, r *http.Request) { // <-- Añadir paréntesis aquí
-			n.raft.mu.Lock()
-			defer n.raft.mu.Unlock()
+	// métrica HTTP sencilla
+	go n.startMetricsHTTP()
 
-			state := "Follower"
-			switch n.raft.state {
-			case Leader:
-				state = "Leader"
-			case Candidate:
-				state = "Candidate"
-			}
+	// esperar peers antes de operar
+	waitForPeers(os.Getenv("PEER_ADDRS"), n.Address, 10, 500*time.Millisecond)
 
-			response := fmt.Sprintf(
-				"Nodo ID: %d\nEstado: %s\nTérmino: %d\nLíder: %d\nCommit Index: %d\nLast Applied: %d",
-				n.ID, state, n.raft.currentTerm, n.raft.leaderId, n.raft.commitIndex, n.raft.lastApplied,
-			)
-
-			w.Header().Set("Content-Type", "text/plain")
-			w.Write([]byte(response))
-		}) // <-- Paréntesis faltante aquí
-
-		log.Printf("[Nodo %d] Métricas HTTP en :8080", n.ID)
-		if err := http.ListenAndServe(":8080", nil); err != nil {
-			log.Printf("[Nodo %d] Error en servidor HTTP: %v", n.ID, err)
-		}
-	}()
-
-	// 3. Registrar nodo en el cluster
-	time.Sleep(10 * time.Second) // Esperar antes de iniciar el bootstrap
-	n.bootstrapCluster()
-
-	log.Printf("[Nodo %d] Operativo en %s", n.ID, n.Address)
+	log.Printf("[Nodo %d] operativo en %s", n.ID, n.Address)
 	return nil
 }
 
@@ -134,106 +85,123 @@ func (n *Node) Stop() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	// 1. Detener servicios en orden seguro
 	n.server.GracefulStop()
-	n.raft.persistState()
 	n.fileMgr.Sync()
-
-	// 2. Limpiar recursos
 	n.snapshotter.Cleanup()
+	n.raft.saveState()
 
-	log.Printf("[Nodo %d] Detenido correctamente", n.ID)
+	log.Printf("[Nodo %d] detenido", n.ID)
 }
 
-// ==================== Funciones internas ====================
+/* ---------- estado persistente ---------- */
+
 func (n *Node) loadPersistentState() {
-	// 1. Cargar snapshot más reciente
 	if err := n.snapshotter.LoadLatest(); err != nil {
-		log.Printf("Error cargando snapshot: %v", err)
+		log.Printf("snapshot: %v", err)
 	}
-
-	// 2. Cargar logs no aplicados
-	if err := n.raft.loadUnappliedLogs(); err != nil {
-		log.Printf("Error cargando logs: %v", err)
-	}
+	// `raft.loadStateInternal()` ya se llama desde NewRaft
 }
 
-func (n *Node) monitorPeerConnections() {
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		for _, peer := range n.raft.peers {
-			if !peer.IsActive() {
-				go peer.Reconnect()
-			}
-		}
-	}
-}
-
-func (n *Node) bootstrapCluster() {
-	if len(n.raft.peers) == 0 {
-		n.raft.becomeLeader()
-		return
+// ---------- interceptores ---------- //
+func (n *Node) leaderInterceptor() grpc.UnaryServerInterceptor {
+	// Métodos que requieren líder
+	requiresLeader := map[string]bool{
+		"/proto.RaftService/TransferFile": true,
+		"/proto.RaftService/DeleteFile":   true,
+		"/proto.RaftService/MkDir":        true,
+		"/proto.RaftService/RemoveDir":    true,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	return func(ctx context.Context, req interface{},
+		info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler) (interface{}, error) {
 
-	for _, peer := range n.raft.peers {
-		// Enviar JoinRequest con el LastIndex correcto
-		req := &pb.JoinRequest{
-			NodeId:    int64(n.ID),
-			Address:   n.Address,
-			LastIndex: int64(n.raft.lastApplied),
+		// Deja pasar siempre las RPC internas de Raft
+		if !requiresLeader[info.FullMethod] {
+			return handler(ctx, req)
 		}
 
-		// Manejar errores de conexión
-		if _, err := peer.client.JoinCluster(ctx, req); err != nil {
-			log.Printf("Error uniendo al cluster: %v", err)
-			go peer.Reconnect() // Reconexión automática
-		}
-	}
-}
+		// Solo las de sistema de archivos exigen líder
+		n.raft.mu.Lock()
+		isLeader := n.raft.state == Leader && n.raft.id == n.ID
+		n.raft.mu.Unlock()
 
-// ==================== Interceptores gRPC ====================
-func (n *Node) connectionStateInterceptor() grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		if n.raft.state == Leader && !n.raft.checkQuorum() {
-			return nil, status.Error(codes.Unavailable, "cluster sin quórum")
-		}
-		return handler(ctx, req)
-	}
-}
-
-func (n *Node) leaderCheckInterceptor() grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		if info.FullMethod != "/proto.RaftService/JoinCluster" && n.raft.leaderId != n.ID {
+		if !isLeader {
 			return nil, status.Error(codes.FailedPrecondition, "no soy líder")
 		}
 		return handler(ctx, req)
 	}
 }
 
-// ==================== Manager de Snapshots ====================
-type SnapshotManager struct {
-	node         *Node
-	snapshotPath string
+/* ---------- métrica HTTP ---------- */
+
+func (n *Node) startMetricsHTTP() {
+	http.HandleFunc("/raft", func(w http.ResponseWriter, _ *http.Request) {
+		n.raft.mu.Lock()
+		defer n.raft.mu.Unlock()
+		state := [...]string{"Follower", "Candidate", "Leader"}[n.raft.state]
+		fmt.Fprintf(w, "id=%d state=%s term=%d commit=%d applied=%d\n",
+			n.ID, state, n.raft.currentTerm, n.raft.commitIndex, n.raft.lastApplied)
+	})
+	log.Printf("[Nodo %d] métrica en :8080/raft", n.ID)
+	_ = http.ListenAndServe(":8080", nil)
 }
 
-func NewSnapshotManager(node *Node) *SnapshotManager {
-	basePath := filepath.Join(os.Getenv("RAFT_DATA_DIR"), fmt.Sprintf("node%d", node.ID))
-	return &SnapshotManager{
-		node:         node,
-		snapshotPath: filepath.Join(basePath, "snapshots"),
+/* ---------- utilidades ---------- */
+
+// LÓGICA PARA NODOS:
+// waitForPeers lee PEER_ADDRS="id@host:port,..." y espera a que cada host:port acepte TCP.
+func waitForPeers(peersEnv, selfAddr string, retries int, backoff time.Duration) {
+	addrs := strings.Split(peersEnv, ",")
+	for _, raw := range addrs {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+
+		// ── Quitar el prefijo "id@" si existe ──
+		parts := strings.SplitN(raw, "@", 2)
+		addr := parts[len(parts)-1] // siempre host:port
+
+		if addr == selfAddr {
+			continue // saltar a sí mismo
+		}
+
+		var ok bool
+		for i := 1; i <= retries; i++ {
+			conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+			if err == nil {
+				conn.Close()
+				log.Printf("✅ peer %s escuchando", addr)
+				ok = true
+				break
+			}
+			wait := backoff + time.Duration(rand.Int63n(int64(backoff)))
+			log.Printf("⏳ esperando %s (intento %d/%d), reintento en %v", addr, i, retries, wait)
+			time.Sleep(wait)
+		}
+		if !ok {
+			log.Fatalf("❌ peer %s no respondió tras %d intentos", addr, retries)
+		}
 	}
 }
 
-func (sm *SnapshotManager) AutoSnapshot(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+/* ---------- SnapshotManager ---------- */
 
-	for range ticker.C {
+type SnapshotManager struct {
+	node *Node
+	dir  string
+}
+
+func NewSnapshotManager(n *Node) *SnapshotManager {
+	base := filepath.Join(os.Getenv("RAFT_DATA_DIR"), fmt.Sprintf("node%d", n.ID))
+	return &SnapshotManager{node: n, dir: filepath.Join(base, "snapshots")}
+}
+
+func (sm *SnapshotManager) AutoSnapshot(interval time.Duration) {
+	tk := time.NewTicker(interval)
+	defer tk.Stop()
+	for range tk.C {
 		if sm.node.raft.state == Leader {
 			sm.node.raft.takeSnapshot()
 		}
@@ -241,5 +209,13 @@ func (sm *SnapshotManager) AutoSnapshot(interval time.Duration) {
 }
 
 func (sm *SnapshotManager) LoadLatest() error {
-	return sm.node.raft.loadSnapshot()
+	return sm.node.raft.applySnapshot(nil, int64(sm.node.raft.commitIndex), int64(sm.node.raft.currentTerm))
+}
+
+func (sm *SnapshotManager) Cleanup() {
+	if files, err := os.ReadDir(sm.dir); err == nil {
+		for _, f := range files {
+			_ = os.Remove(filepath.Join(sm.dir, f.Name()))
+		}
+	}
 }

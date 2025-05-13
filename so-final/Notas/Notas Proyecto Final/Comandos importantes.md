@@ -1,3 +1,9 @@
+# DOCKER
+docker-compose down -v        # limpia datos previos
+docker-compose build --no-cache
+docker-compose up
+
+
 
 ## COMANDO PROTO
 Para compilar nuevamente el file.proto:
@@ -19,6 +25,9 @@ https://github.com/debajyotidasgupta/raft-consensus
 
 ## COMANDOS DOCKER
 ### Iniciar y Detener Contenedores
+#### Reconstruir y Ejecutar todos los contenedores
+    docker-compose down -v && docker-compose up --build
+
 #### Iniciar todos los servicios en segundo plano
     docker-compose up -d
 

@@ -2,25 +2,27 @@ package main
 
 import (
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"so-final/node"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 )
 
+// main arranca el servidor gRPC **antes** de intentar marcar a los peers.
+// Así evitamos el ciclo de bloqueo que ocurría cuando cada contenedor
+// intentaba conectarse mientras nadie escuchaba todavía.
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
 
-	// 1. Validar NODE_ID
-	nodeIDStr := os.Getenv("NODE_ID")
-	if nodeIDStr == "" {
+	/* ───── 1. Configuración básica ───── */
+	idStr := os.Getenv("NODE_ID")
+	if idStr == "" {
 		log.Fatal("NODE_ID no está definido")
 	}
-	nodeID, err := strconv.Atoi(nodeIDStr)
+	nodeID, err := strconv.Atoi(idStr)
 	if err != nil {
 		log.Fatalf("NODE_ID inválido: %v", err)
 	}
@@ -30,76 +32,73 @@ func main() {
 		log.Fatal("NODE_ADDR no está definido")
 	}
 
-	// 2. Configurar directorio RAFT_DATA_DIR
-	raftDataDir := os.Getenv("RAFT_DATA_DIR")
-	if raftDataDir == "" {
-		raftDataDir = "/app/raft-data"
+	raftDir := os.Getenv("RAFT_DATA_DIR")
+	if raftDir == "" {
+		raftDir = "/app/raft-data"
 	}
-	if err := os.MkdirAll(raftDataDir, 0755); err != nil {
+	if err := os.MkdirAll(raftDir, 0o755); err != nil {
 		log.Fatalf("Error creando RAFT_DATA_DIR: %v", err)
 	}
-	os.Setenv("RAFT_DATA_DIR", raftDataDir)
+	os.Setenv("RAFT_DATA_DIR", raftDir) // para el resto del código
 
-	// 3. Procesar PEER_ADDRS
-	peers := make([]*node.Peer, 0)
-	peerAddrs := os.Getenv("PEER_ADDRS")
-	if peerAddrs != "" {
-		addresses := strings.Split(peerAddrs, ",")
-		existingIDs := make(map[int]bool)
+	/* ───── 2. Construir lista de peers con IDs correctos ───── */
+	raw := strings.Split(os.Getenv("PEER_ADDRS"), ",")
+	seen := map[int]bool{}
+	peers := make([]*node.Peer, 0, len(raw))
 
-		for _, addr := range addresses {
-			parts := strings.Split(addr, "@")
-			if len(parts) != 2 {
-				log.Printf("Formato inválido en peer: %s. Se esperaba 'ID@host:puerto'", addr)
-				continue
-			}
-
-			id, err := strconv.Atoi(parts[0])
-			if err != nil {
-				log.Printf("ID no numérico en %s: %v", addr, err)
-				continue
-			}
-
-			// Validar ID único
-			if existingIDs[id] {
-				log.Printf("ID duplicado en PEER_ADDRS: %d", id)
-				continue
-			}
-			existingIDs[id] = true
-
-			peerAddress := parts[1]
-			log.Printf("Conectando a peer %d en %s", id, peerAddress)
-
-			peer, err := node.NewPeer(id, peerAddress)
-			if err != nil {
-				log.Printf("Error creando peer %d (%s): %v", id, peerAddress, err)
-				continue
-			}
-
-			peers = append(peers, peer)
+	nextFallbackID := 1
+	for _, entry := range raw {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
 		}
+
+		// extraer id@host:port  ó  host:port
+		var pid int
+		var addr string
+
+		if parts := strings.SplitN(entry, "@", 2); len(parts) == 2 {
+			pid, err = strconv.Atoi(parts[0])
+			if err != nil {
+				log.Fatalf("PEER_ADDRS: id inválido en %q", entry)
+			}
+			addr = parts[1]
+		} else {
+			// respaldo: asigna id incremental que no choque
+			for seen[nextFallbackID] || nextFallbackID == nodeID {
+				nextFallbackID++
+			}
+			pid = nextFallbackID
+			addr = entry
+		}
+
+		if pid == nodeID || addr == nodeAddr {
+			continue // evita agregarse a sí mismo
+		}
+		if _, _, err := net.SplitHostPort(addr); err != nil {
+			log.Fatalf("PEER_ADDRS: formato host:port inválido en %q", entry)
+		}
+		if seen[pid] {
+			log.Fatalf("PEER_ADDRS: id %d duplicado", pid)
+		}
+		seen[pid] = true
+
+		peers = append(peers, &node.Peer{ID: pid, Address: addr}) // conn se abrirá dentro del nodo
 	}
 
-	// 4. Ordenar peers por ID
-	sort.Slice(peers, func(i, j int) bool {
-		return peers[i].ID < peers[j].ID
-	})
-
-	// 5. Iniciar nodo
-	time.Sleep(5 * time.Second) // Espera inicial para que los servicios estén listos
+	/* ───── 3. Inicializar y arrancar nodo ───── */
 	n := node.NewNode(nodeID, nodeAddr, peers)
 	if err := n.Start(); err != nil {
-		log.Fatalf("Error al iniciar nodo %d: %v", nodeID, err)
+		log.Fatalf("Error iniciando nodo %d: %v", nodeID, err)
 	}
-	log.Printf("Nodo %d iniciado en %s", nodeID, nodeAddr)
+	log.Printf("Nodo %d operativo en %s", nodeID, nodeAddr)
 
-	// 6. Manejo de señales para cierre controlado
+	/* ───── 4. Esperar señal de terminación ───── */
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-
-	// 7. Mantener el programa en ejecución hasta señal
 	<-stop
-	log.Println("Recibida señal de terminación. Deteniendo nodo...")
+
+	log.Println("Deteniendo nodo…")
 	n.Stop()
 	log.Println("Nodo detenido correctamente")
 }

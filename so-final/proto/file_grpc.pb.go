@@ -19,9 +19,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	RaftService_TransferFile_FullMethodName    = "/proto.RaftService/TransferFile"
+	RaftService_DeleteFile_FullMethodName      = "/proto.RaftService/DeleteFile"
+	RaftService_MkDir_FullMethodName           = "/proto.RaftService/MkDir"
+	RaftService_RemoveDir_FullMethodName       = "/proto.RaftService/RemoveDir"
+	RaftService_ListDir_FullMethodName         = "/proto.RaftService/ListDir"
 	RaftService_RequestVote_FullMethodName     = "/proto.RaftService/RequestVote"
 	RaftService_AppendEntries_FullMethodName   = "/proto.RaftService/AppendEntries"
-	RaftService_TransferFile_FullMethodName    = "/proto.RaftService/TransferFile"
 	RaftService_InstallSnapshot_FullMethodName = "/proto.RaftService/InstallSnapshot"
 	RaftService_JoinCluster_FullMethodName     = "/proto.RaftService/JoinCluster"
 )
@@ -29,10 +33,18 @@ const (
 // RaftServiceClient is the client API for RaftService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// ========== Servicio principal ==========
 type RaftServiceClient interface {
+	// --- sistema de archivos ---
+	TransferFile(ctx context.Context, in *FileData, opts ...grpc.CallOption) (*GenericResponse, error)
+	DeleteFile(ctx context.Context, in *DeleteRequest, opts ...grpc.CallOption) (*GenericResponse, error)
+	MkDir(ctx context.Context, in *MkDirRequest, opts ...grpc.CallOption) (*GenericResponse, error)
+	RemoveDir(ctx context.Context, in *RemoveDirRequest, opts ...grpc.CallOption) (*GenericResponse, error)
+	ListDir(ctx context.Context, in *DirRequest, opts ...grpc.CallOption) (*DirReply, error)
+	// --- RPC Raft estándar ---
 	RequestVote(ctx context.Context, in *VoteRequest, opts ...grpc.CallOption) (*VoteResponse, error)
 	AppendEntries(ctx context.Context, in *AppendRequest, opts ...grpc.CallOption) (*AppendResponse, error)
-	TransferFile(ctx context.Context, in *FileData, opts ...grpc.CallOption) (*TransferResponse, error)
 	InstallSnapshot(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[SnapshotChunk, SnapshotAck], error)
 	JoinCluster(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*JoinResponse, error)
 }
@@ -43,6 +55,56 @@ type raftServiceClient struct {
 
 func NewRaftServiceClient(cc grpc.ClientConnInterface) RaftServiceClient {
 	return &raftServiceClient{cc}
+}
+
+func (c *raftServiceClient) TransferFile(ctx context.Context, in *FileData, opts ...grpc.CallOption) (*GenericResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GenericResponse)
+	err := c.cc.Invoke(ctx, RaftService_TransferFile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *raftServiceClient) DeleteFile(ctx context.Context, in *DeleteRequest, opts ...grpc.CallOption) (*GenericResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GenericResponse)
+	err := c.cc.Invoke(ctx, RaftService_DeleteFile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *raftServiceClient) MkDir(ctx context.Context, in *MkDirRequest, opts ...grpc.CallOption) (*GenericResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GenericResponse)
+	err := c.cc.Invoke(ctx, RaftService_MkDir_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *raftServiceClient) RemoveDir(ctx context.Context, in *RemoveDirRequest, opts ...grpc.CallOption) (*GenericResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GenericResponse)
+	err := c.cc.Invoke(ctx, RaftService_RemoveDir_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *raftServiceClient) ListDir(ctx context.Context, in *DirRequest, opts ...grpc.CallOption) (*DirReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DirReply)
+	err := c.cc.Invoke(ctx, RaftService_ListDir_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *raftServiceClient) RequestVote(ctx context.Context, in *VoteRequest, opts ...grpc.CallOption) (*VoteResponse, error) {
@@ -59,16 +121,6 @@ func (c *raftServiceClient) AppendEntries(ctx context.Context, in *AppendRequest
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AppendResponse)
 	err := c.cc.Invoke(ctx, RaftService_AppendEntries_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *raftServiceClient) TransferFile(ctx context.Context, in *FileData, opts ...grpc.CallOption) (*TransferResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TransferResponse)
-	err := c.cc.Invoke(ctx, RaftService_TransferFile_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -101,10 +153,18 @@ func (c *raftServiceClient) JoinCluster(ctx context.Context, in *JoinRequest, op
 // RaftServiceServer is the server API for RaftService service.
 // All implementations must embed UnimplementedRaftServiceServer
 // for forward compatibility.
+//
+// ========== Servicio principal ==========
 type RaftServiceServer interface {
+	// --- sistema de archivos ---
+	TransferFile(context.Context, *FileData) (*GenericResponse, error)
+	DeleteFile(context.Context, *DeleteRequest) (*GenericResponse, error)
+	MkDir(context.Context, *MkDirRequest) (*GenericResponse, error)
+	RemoveDir(context.Context, *RemoveDirRequest) (*GenericResponse, error)
+	ListDir(context.Context, *DirRequest) (*DirReply, error)
+	// --- RPC Raft estándar ---
 	RequestVote(context.Context, *VoteRequest) (*VoteResponse, error)
 	AppendEntries(context.Context, *AppendRequest) (*AppendResponse, error)
-	TransferFile(context.Context, *FileData) (*TransferResponse, error)
 	InstallSnapshot(grpc.ClientStreamingServer[SnapshotChunk, SnapshotAck]) error
 	JoinCluster(context.Context, *JoinRequest) (*JoinResponse, error)
 	mustEmbedUnimplementedRaftServiceServer()
@@ -117,14 +177,26 @@ type RaftServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedRaftServiceServer struct{}
 
+func (UnimplementedRaftServiceServer) TransferFile(context.Context, *FileData) (*GenericResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TransferFile not implemented")
+}
+func (UnimplementedRaftServiceServer) DeleteFile(context.Context, *DeleteRequest) (*GenericResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteFile not implemented")
+}
+func (UnimplementedRaftServiceServer) MkDir(context.Context, *MkDirRequest) (*GenericResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MkDir not implemented")
+}
+func (UnimplementedRaftServiceServer) RemoveDir(context.Context, *RemoveDirRequest) (*GenericResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RemoveDir not implemented")
+}
+func (UnimplementedRaftServiceServer) ListDir(context.Context, *DirRequest) (*DirReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListDir not implemented")
+}
 func (UnimplementedRaftServiceServer) RequestVote(context.Context, *VoteRequest) (*VoteResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RequestVote not implemented")
 }
 func (UnimplementedRaftServiceServer) AppendEntries(context.Context, *AppendRequest) (*AppendResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AppendEntries not implemented")
-}
-func (UnimplementedRaftServiceServer) TransferFile(context.Context, *FileData) (*TransferResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method TransferFile not implemented")
 }
 func (UnimplementedRaftServiceServer) InstallSnapshot(grpc.ClientStreamingServer[SnapshotChunk, SnapshotAck]) error {
 	return status.Errorf(codes.Unimplemented, "method InstallSnapshot not implemented")
@@ -151,6 +223,96 @@ func RegisterRaftServiceServer(s grpc.ServiceRegistrar, srv RaftServiceServer) {
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&RaftService_ServiceDesc, srv)
+}
+
+func _RaftService_TransferFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FileData)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServiceServer).TransferFile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RaftService_TransferFile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServiceServer).TransferFile(ctx, req.(*FileData))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RaftService_DeleteFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServiceServer).DeleteFile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RaftService_DeleteFile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServiceServer).DeleteFile(ctx, req.(*DeleteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RaftService_MkDir_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MkDirRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServiceServer).MkDir(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RaftService_MkDir_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServiceServer).MkDir(ctx, req.(*MkDirRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RaftService_RemoveDir_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveDirRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServiceServer).RemoveDir(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RaftService_RemoveDir_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServiceServer).RemoveDir(ctx, req.(*RemoveDirRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RaftService_ListDir_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DirRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServiceServer).ListDir(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RaftService_ListDir_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServiceServer).ListDir(ctx, req.(*DirRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _RaftService_RequestVote_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -189,24 +351,6 @@ func _RaftService_AppendEntries_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
-func _RaftService_TransferFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(FileData)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(RaftServiceServer).TransferFile(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: RaftService_TransferFile_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RaftServiceServer).TransferFile(ctx, req.(*FileData))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _RaftService_InstallSnapshot_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(RaftServiceServer).InstallSnapshot(&grpc.GenericServerStream[SnapshotChunk, SnapshotAck]{ServerStream: stream})
 }
@@ -240,16 +384,32 @@ var RaftService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*RaftServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
+			MethodName: "TransferFile",
+			Handler:    _RaftService_TransferFile_Handler,
+		},
+		{
+			MethodName: "DeleteFile",
+			Handler:    _RaftService_DeleteFile_Handler,
+		},
+		{
+			MethodName: "MkDir",
+			Handler:    _RaftService_MkDir_Handler,
+		},
+		{
+			MethodName: "RemoveDir",
+			Handler:    _RaftService_RemoveDir_Handler,
+		},
+		{
+			MethodName: "ListDir",
+			Handler:    _RaftService_ListDir_Handler,
+		},
+		{
 			MethodName: "RequestVote",
 			Handler:    _RaftService_RequestVote_Handler,
 		},
 		{
 			MethodName: "AppendEntries",
 			Handler:    _RaftService_AppendEntries_Handler,
-		},
-		{
-			MethodName: "TransferFile",
-			Handler:    _RaftService_TransferFile_Handler,
 		},
 		{
 			MethodName: "JoinCluster",
