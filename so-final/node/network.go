@@ -63,7 +63,7 @@ func NewPeer(id int, addr string) (*Peer, error) {
 }
 
 func (p *Peer) dial() error {
-	kp := keepalive.ClientParameters{Time: 30 * time.Second, Timeout: 15 * time.Second, PermitWithoutStream: true}
+	kp := keepalive.ClientParameters{Time: 2 * time.Minute, Timeout: 20 * time.Second}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

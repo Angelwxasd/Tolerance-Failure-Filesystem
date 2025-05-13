@@ -17,6 +17,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 )
 
@@ -44,9 +45,15 @@ func NewNode(id int, addr string, peers []*Peer) *Node {
 	}
 	n.raft = NewRaft(id, peers)
 	n.snapshotter = NewSnapshotManager(n)
+	// ─── keep-alive del lado servidor ────────────────────────────────
+	kaep := keepalive.EnforcementPolicy{
+		MinTime:             2 * time.Minute, // ≥ Time del cliente
+		PermitWithoutStream: true,            // acepta pings sin RPC activas
+	}
 
 	svc := &NetworkService{node: n, fileMgr: n.fileMgr}
 	n.server = grpc.NewServer(
+		grpc.KeepaliveEnforcementPolicy(kaep),
 		grpc.ChainUnaryInterceptor(
 			n.connectionStateInterceptor(),
 			n.leaderInterceptor(), // versión filtrada solo para RPC de FS
