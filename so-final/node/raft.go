@@ -24,17 +24,23 @@ import (
 
 type RaftState int
 
+// RaftState es el estado del nodo en el algoritmo de consenso
 const (
 	Follower RaftState = iota
 	Candidate
 	Leader
 )
 
+//	Entrada de log Raft → {Term, Command};
+//
+// el comando es genérico (interface{}) pero en este proyecto siempre es un *pb.FileCommand.
 type LogEntry struct {
 	Term    int
 	Command interface{}
 }
 
+// Utilidades: max entre dos enteros;
+// toProto serializa un slice de LogEntry a []*pb.LogEntry (protobuf) para AppendEntries.
 func max(a, b int) int {
 	if a > b {
 		return a
@@ -54,9 +60,17 @@ func toProto(entries []LogEntry) []*pb.LogEntry {
 }
 
 /* ---------- estructura principal ---------- */
+/* Contiene todo el estado duradero y volátil que describe el algoritmo Raft:
 
+   Persistente: currentTerm, votedFor, log, snapshot (lastIncluded*, snapshot).
+
+   Volátil (en cada nodo): commitIndex, lastApplied.
+
+   Solo en el líder: nextIndex[], matchIndex[].
+
+   Infra: state, electionTimer, lista de *Peer.  */
 type Raft struct {
-	mu sync.Mutex
+	mu sync.RWMutex
 
 	id          int
 	currentTerm int
@@ -82,9 +96,23 @@ type Raft struct {
 }
 
 /* ---------- constructor ---------- */
+/* Detecta el ID máximo de todos los peers para dimensionar los arrays.
 
+Crea el Raft con:
+
+    Entrada sentinela en el índice 0 (Term = 0),
+
+    votedFor = -1,
+
+    estado inicial Follower.
+
+Carga snapshot y meta-datos si existen, ajusta nextIndex[], commitIndex, lastApplied.
+
+Persiste el estado y enciende el election timer con resetElectionTimer.
+
+Log “follower listo”. */
 func NewRaft(id int, peers []*Peer) *Raft {
-	// ─── 1. Calcular el ID máximo ────────────────────────────────────────────────
+	// 1. Calcular ID máx. ----------------------------------------------
 	maxID := id
 	for _, p := range peers {
 		if p != nil && p.ID > maxID {
@@ -92,18 +120,19 @@ func NewRaft(id int, peers []*Peer) *Raft {
 		}
 	}
 
-	size := maxID + 1 // índices válidos 0 … maxID (incluye huecos)
+	size := maxID + 1 // índices válidos 0…maxID
 	rf := &Raft{
-		id:         id,
-		votedFor:   -1,
-		state:      Follower,
-		log:        []LogEntry{},
+		id:       id,
+		votedFor: -1,
+		state:    Follower,
+		// ⬇️ Entrada sentinela: índice 0 siempre existe y tiene Term 0
+		log:        []LogEntry{{Term: 0}},
 		peers:      peers,
 		nextIndex:  make([]int, size),
 		matchIndex: make([]int, size),
 	}
 
-	// ─── 2. Inicializar usando snapshot (si existe) ──────────────────────────────
+	// 2. Inicializar con snapshot --------------------------------------
 	rf.mu.Lock()
 	rf.loadSnapshot()
 	rf.loadStateInternal()
@@ -117,7 +146,7 @@ func NewRaft(id int, peers []*Peer) *Raft {
 	}
 	rf.mu.Unlock()
 
-	// ─── 3. Arranque ─────────────────────────────────────────────────────────────
+	// 3. Arranque -------------------------------------------------------
 	rf.saveState()
 	rf.resetElectionTimer()
 	log.Printf("[Nodo %d] follower listo", id)
@@ -125,11 +154,12 @@ func NewRaft(id int, peers []*Peer) *Raft {
 }
 
 /* ---------- persistencia básica ---------- */
-
+// Construye la ruta …/RAFT_DATA_DIR/node<id>
 func (rf *Raft) dir() string {
 	return filepath.Join(os.Getenv("RAFT_DATA_DIR"), fmt.Sprintf("node%d", rf.id))
 }
 
+// Serializa meta.json y log.bin (uno por línea, formato protobuf). Versión Locked se usa cuando ya está tomado el mu.
 func (rf *Raft) saveState() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -161,6 +191,8 @@ func (rf *Raft) saveStateLocked() {
 	os.WriteFile(path.Join(rf.dir(), "log.bin"), buf.Bytes(), 0o644)
 }
 
+// Deserializa lo anterior: restaura meta-datos y reconstruye el slice log.
+// Asegura que commitIndex y lastApplied nunca queden antes del último snapshot.
 func (rf *Raft) loadStateInternal() {
 	meta := path.Join(rf.dir(), "meta.json")
 	if b, err := os.ReadFile(meta); err == nil {
@@ -197,7 +229,7 @@ func (rf *Raft) loadStateInternal() {
 }
 
 /* ---------- snapshot mínimo ---------- */
-
+// Si existe snapshot.bin, delega en applySnapshot.
 func (rf *Raft) loadSnapshot() {
 	snap := path.Join(rf.dir(), "snapshot.bin")
 	if data, err := os.ReadFile(snap); err == nil {
@@ -205,6 +237,9 @@ func (rf *Raft) loadSnapshot() {
 	}
 }
 
+//	Líder guarda {LastIncludedIndex, LastIncludedTerm} como JSON.
+//
+// No almacena el contenido de archivos (simplificado).
 func (rf *Raft) takeSnapshot() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -213,6 +248,9 @@ func (rf *Raft) takeSnapshot() {
 	os.WriteFile(path.Join(rf.dir(), "snapshot.bin"), b, 0o644)
 }
 
+//	Actualiza índices (lastIncluded*), descarta log anterior y sobrescribe snapshot en memoria.
+//
+// Se sincroniza con snapLock para evitar carreras con streaming.
 func (rf *Raft) applySnapshot(data []byte, idx, term int64) error {
 	rf.snapLock.Lock()
 	defer rf.snapLock.Unlock()
@@ -226,9 +264,10 @@ func (rf *Raft) applySnapshot(data []byte, idx, term int64) error {
 }
 
 /* ---------- timers ---------- */
-
+// Devuelve un random 400-800 ms (previene colisiones de elecciones).
 func timeout() time.Duration { return time.Duration(rand.Intn(400)+400) * time.Millisecond }
 
+// Cancela el anterior, programa un nuevo time.AfterFunc. Si expira y no somos líder ⇒ startElection().
 func (rf *Raft) resetElectionTimer() {
 	if rf.electionTimer != nil {
 		rf.electionTimer.Stop()
@@ -243,7 +282,15 @@ func (rf *Raft) resetElectionTimer() {
 }
 
 /* ---------- elecciones y liderazgo ---------- */
+/* Cambia a Candidate, incrementa currentTerm, vota por sí mismo.
 
+Construye VoteRequest con la info de su último log.
+
+Envía la petición a cada peer en goroutines (timeout 300 ms).
+
+Usa atomic.AddInt32 sobre votes para contar réponses.
+
+Si logra mayoría → becomeLeader; si termina sin mayoría → vuelve a Follower y reinicia el timer. */
 func (rf *Raft) startElection() {
 	rf.state = Candidate
 	rf.currentTerm++
@@ -294,6 +341,7 @@ func (rf *Raft) startElection() {
 	}()
 }
 
+/* Se llama cuando recibe un término mayor: actualiza term, pasa a Follower, borra votedFor, reinicia timer y persiste. */
 func (rf *Raft) stepDownToFollower(term int) {
 	if term <= rf.currentTerm {
 		return
@@ -305,12 +353,21 @@ func (rf *Raft) stepDownToFollower(term int) {
 	rf.saveStateLocked()
 }
 
+/*
+	Confirma que seguía en estado Candidate.
+
+Marca state = Leader.
+
+Inicializa nextIndex[i] = lastLogIndex + 1 para todos.
+
+Persiste y lanza goroutine sendHeartbeats() para empezar replicación.
+*/
 func (rf *Raft) becomeLeader() {
 	if rf.state != Candidate {
 		return
 	}
 	rf.state = Leader
-	lastIndex := rf.lastIncludedIndex + len(rf.log)
+	lastIndex := rf.lastIncludedIndex + len(rf.log) - 1
 	for i := range rf.nextIndex {
 		rf.nextIndex[i] = lastIndex + 1
 	}
@@ -320,7 +377,9 @@ func (rf *Raft) becomeLeader() {
 }
 
 /* ---------- replicación ---------- */
+/* Ticker de 50 ms.
 
+Mientras sigamos siendo líder: copia peers y llama a syncNode(p) en paralelo. */
 func (rf *Raft) sendHeartbeats() {
 	tk := time.NewTicker(50 * time.Millisecond)
 	defer tk.Stop()
@@ -342,6 +401,19 @@ func (rf *Raft) sendHeartbeats() {
 	}
 }
 
+/*
+	Calcula nextIndex y prevLog (incluyendo casos tras snapshot).
+
+Envía AppendRequest con las entradas pendientes.
+
+Según la AppendResponse:
+
+	Term mayor ⇒ stepDownToFollower.
+
+	Success==true ⇒ avanza nextIndex, actualiza matchIndex, llama a updateCommitIndex.
+
+	Failure ⇒ retrocede nextIndex (back-off exponencial simplificado: -1).
+*/
 func (rf *Raft) syncNode(peer *Peer) error {
 	rf.mu.Lock()
 	if rf.state != Leader {
@@ -400,7 +472,7 @@ func (rf *Raft) logSliceFrom(idx int) []LogEntry {
 }
 
 /* ---------- aplicar entradas ---------- */
-
+// Se ejecuta al recibir AppendEntries. Valida prevLog y, si encaja, recorta/añade las nuevas entradas.
 func (rf *Raft) applyEntries(req *pb.AppendRequest) bool {
 	prev := int(req.PrevLogIndex) - rf.lastIncludedIndex
 	if prev < 0 || prev >= len(rf.log) {
@@ -428,7 +500,7 @@ func (rf *Raft) getLastLogInfo() (idx, term int) {
 	if len(rf.log) == 0 {
 		return rf.lastIncludedIndex, rf.lastIncludedTerm
 	}
-	return rf.lastIncludedIndex + len(rf.log), rf.log[len(rf.log)-1].Term
+	return rf.lastIncludedIndex + len(rf.log) - 1, rf.log[len(rf.log)-1].Term
 }
 
 /* ---------- proposición de comandos ---------- */
@@ -440,6 +512,7 @@ func (rf *Raft) ProposeCommand(cmd *pb.FileCommand) error {
 		return errors.New("no soy líder")
 	}
 	rf.log = append(rf.log, LogEntry{Term: rf.currentTerm, Command: cmd})
+	rf.matchIndex[rf.id] = rf.lastIncludedIndex + len(rf.log) - 1
 	rf.saveStateLocked()
 	go rf.sendHeartbeats()
 	return nil
@@ -459,7 +532,7 @@ func (rf *Raft) applyLogs() {
 		rf.lastApplied++
 
 		// Índice relativo dentro del slice rf.log
-		rel := rf.lastApplied - rf.lastIncludedIndex - 1
+		rel := rf.lastApplied - rf.lastIncludedIndex
 		if rel < 0 || rel >= len(rf.log) {
 			continue // puede ocurrir justo después de un snapshot
 		}
@@ -505,20 +578,22 @@ func (rf *Raft) applyLogs() {
 
 // must be called with rf.mu locked (only by the leader)
 func (rf *Raft) updateCommitIndex() {
-	for n := rf.commitIndex + 1; n <= rf.lastIncludedIndex+len(rf.log); n++ {
-		votes := 1 // el líder ya lo tiene replicado
+	upper := rf.lastIncludedIndex + len(rf.log) - 1 // índice real máximo
+	for n := rf.commitIndex + 1; n <= upper; n++ {
+		votes := 1
 		for _, p := range rf.peers {
 			if p.ID != rf.id && rf.matchIndex[p.ID] >= n {
 				votes++
 			}
 		}
-		// ⬇️ mayoría correcta
 		if votes >= rf.quorumSize() &&
-			rf.log[n-rf.lastIncludedIndex-1].Term == rf.currentTerm {
+			rf.log[n-rf.lastIncludedIndex].Term == rf.currentTerm {
 			rf.commitIndex = n
 		}
 	}
-	go rf.applyLogs()
+	if rf.commitIndex > rf.lastApplied {
+		go rf.applyLogs()
+	}
 }
 
 // ---------- quorum helper ----------

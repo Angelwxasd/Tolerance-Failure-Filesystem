@@ -1,4 +1,6 @@
-
+############################
+#        NETWORKS          #
+############################
 networks:
   raft-network:
     driver: bridge
@@ -7,15 +9,18 @@ networks:
       com.docker.network.enable_ipv6: "false"
       com.docker.network.bridge.enable_icc: "true"
 
+############################
+#        VOLUMES           #
+############################
 volumes:
-  node1_data:   {}
-  node2_data:   {}
-  node3_data:   {}
-  node4_data:   {}
-  raft1_data:   {}
-  raft2_data:   {}
-  raft3_data:   {}
-  raft4_data:   {}
+  node1_data: {}
+  node2_data: {}
+  node3_data: {}
+  node4_data: {}
+  raft1_data: {}
+  raft2_data: {}
+  raft3_data: {}
+  raft4_data: {}
 
 ############################
 #         SERVICES         #
@@ -36,7 +41,9 @@ services:
     networks:
       raft-network:
         aliases: [ node1 ]
-    ports: [ "8081:8080" ]   # métricas HTTP
+    ports:
+      - "50051:50051"   # gRPC
+      - "8081:8080"     # métricas HTTP
     volumes:
       - node1_data:/app/files
       - raft1_data:/app/raft-data
@@ -60,7 +67,9 @@ services:
     networks:
       raft-network:
         aliases: [ node2 ]
-    ports: [ "8082:8080" ]
+    ports:
+      - "50052:50051"
+      - "8082:8080"
     volumes:
       - node2_data:/app/files
       - raft2_data:/app/raft-data
@@ -84,7 +93,9 @@ services:
     networks:
       raft-network:
         aliases: [ node3 ]
-    ports: [ "8083:8080" ]
+    ports:
+      - "50053:50051"
+      - "8083:8080"
     volumes:
       - node3_data:/app/files
       - raft3_data:/app/raft-data
@@ -108,7 +119,9 @@ services:
     networks:
       raft-network:
         aliases: [ node4 ]
-    ports: [ "8084:8080" ]
+    ports:
+      - "50054:50051"
+      - "8084:8080"
     volumes:
       - node4_data:/app/files
       - raft4_data:/app/raft-data

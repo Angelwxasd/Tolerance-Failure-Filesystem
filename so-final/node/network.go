@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +25,10 @@ import (
 )
 
 // ---------- Servicio Raft ---------- //
+/* Referencia al nodo (*Node) para acceder a Raft y demás subsistemas.
 
+fileMgr para validar rutas y acceder al directorio base.
+Implementa todas las RPC declaradas en proto.RaftService. */
 type NetworkService struct {
 	pb.UnimplementedRaftServiceServer
 	node    *Node
@@ -34,6 +38,10 @@ type NetworkService struct {
 /* ---------- helpers comunes ---------- */
 
 // crea un FileCommand y lo envía al líder ­(o devuelve error si este nodo no es líder)
+/* Comprueba que el nodo sea líder; si no, devuelve error "no soy líder".
+
+Construye un pb.FileCommand (op, path, content) y lo envía a Raft con ProposeCommand, iniciando la replicación.
+Se reutiliza por las cuatro RPC de sistema de archivos. */
 func (ns *NetworkService) buildAndPropose(
 	op pb.FileCommand_Operation, path string, content []byte) error {
 
@@ -45,7 +53,13 @@ func (ns *NetworkService) buildAndPropose(
 }
 
 // ---------- Gestión de Peers ---------- //
+/* Mantiene los metadatos y la conexión saliente a otro nodo:
 
+   conn – *grpc.ClientConn reutilizable.
+
+   client – stub generado para invocar RPC.
+
+   isActive – atomic.Bool que indica si la conexión está lista o idle. */
 type Peer struct {
 	ID      int
 	Address string
@@ -57,11 +71,21 @@ type Peer struct {
 	isActive atomic.Bool
 }
 
+// Crea la estructura y llama a dial() para establecer la primera conexión.
 func NewPeer(id int, addr string) (*Peer, error) {
 	p := &Peer{ID: id, Address: addr}
 	return p, p.dial()
 }
 
+/*
+	Configura parámetros keep-alive de lado cliente.
+
+Usa grpc.DialContext con timeout = 5 s y credenciales “insecure” (sin TLS en el laboratorio).
+
+Si la conexión se establece, guarda conn, crea el stub y marca el peer como activo.
+
+Arranca watch() en una goroutine para vigilar la salud del canal.
+*/
 func (p *Peer) dial() error {
 	kp := keepalive.ClientParameters{Time: 2 * time.Minute, Timeout: 20 * time.Second}
 
@@ -71,7 +95,11 @@ func (p *Peer) dial() error {
 	conn, err := grpc.DialContext(ctx, p.Address,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithKeepaliveParams(kp),
-		grpc.WithBlock())
+		grpc.WithBlock(),
+		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+			dialer := &net.Dialer{}
+			return dialer.DialContext(ctx, "tcp", addr)
+		}))
 
 	if err != nil {
 		p.isActive.Store(false)
@@ -85,21 +113,41 @@ func (p *Peer) dial() error {
 }
 
 // node/network.go
+// peer.go – no desconectarse por un canal Idle
+/* Bucle eterno que:
+
+   Consulta conn.GetState().
+
+   Marca isActive = Ready ∨ Idle.
+
+   Si el estado pasa a TransientFailure o Shutdown, invoca Reconnect().
+
+   Reintenta cada 2 s para no bloquear el scheduler. */
 func (p *Peer) watch() {
 	for {
-		if p.conn == nil || p.conn.GetState() != connectivity.Ready {
-			p.Reconnect() // ← intenta marcar de nuevo
+		if p.conn == nil {
+			p.Reconnect()
+		} else {
+			st := p.conn.GetState()
+			active := st == connectivity.Ready || st == connectivity.Idle
+			p.isActive.Store(active)
+
+			// solo reconectar en fallos reales
+			if st == connectivity.TransientFailure || st == connectivity.Shutdown {
+				p.Reconnect()
+			}
 		}
-		p.isActive.Store(p.conn != nil && p.conn.GetState() == connectivity.Ready)
 		time.Sleep(2 * time.Second)
 	}
 }
 
+// Lectura atómica de la bandera de salud.
 func (p *Peer) IsActive() bool { return p.isActive.Load() }
 
 /* ---------- RPC Sistema de archivos ---------- */
 
 // 1. Transferir archivo
+/* 	Valida ruta; construye comando TRANSFER; devuelve success=true solo si el líder replicó la entrada.*/
 func (ns *NetworkService) TransferFile(
 	ctx context.Context, req *pb.FileData) (*pb.GenericResponse, error) {
 
@@ -110,7 +158,8 @@ func (ns *NetworkService) TransferFile(
 	return &pb.GenericResponse{Success: err == nil, Message: msg(err, "transferencia replicada")}, nil
 }
 
-// 2. Borrar archivo
+//  2. Borrar archivo
+//     Igual que arriba pero con operación DELETE.
 func (ns *NetworkService) DeleteFile(
 	ctx context.Context, req *pb.DeleteRequest) (*pb.GenericResponse, error) {
 
@@ -122,6 +171,7 @@ func (ns *NetworkService) DeleteFile(
 }
 
 // 3. Crear directorio
+// Crea directorio (MKDIR).
 func (ns *NetworkService) MkDir(
 	ctx context.Context, req *pb.MkDirRequest) (*pb.GenericResponse, error) {
 
@@ -133,6 +183,7 @@ func (ns *NetworkService) MkDir(
 }
 
 // 4. Eliminar directorio
+// Elimina directorio (RMDIR).
 func (ns *NetworkService) RemoveDir(
 	ctx context.Context, req *pb.RemoveDirRequest) (*pb.GenericResponse, error) {
 
@@ -144,6 +195,8 @@ func (ns *NetworkService) RemoveDir(
 }
 
 // 5. Listar (read-only, sin consenso)
+/* Read-only: lista nombres dentro de req.Path directamente desde disco, sin pasar por Raft.
+Devuelve codes.InvalidArgument ante rutas sospechosas. */
 func (ns *NetworkService) ListDir(
 	ctx context.Context, req *pb.DirRequest) (*pb.DirReply, error) {
 
@@ -162,6 +215,8 @@ func (ns *NetworkService) ListDir(
 	return &pb.DirReply{Names: names}, nil
 }
 
+// Cierra la conexión rota (si existe) y prueba hasta 3 rediales exponenciales (2 s, 4 s, 6 s).
+// Si logra reconectar, escribe un log; si no, deja al peer como inactivo.
 func (p *Peer) Reconnect() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -183,7 +238,15 @@ func (p *Peer) Reconnect() {
 }
 
 // ---------- RPC Votación ---------- //
+/* Implementa la fase de votación:
 
+   Si el término entrante es mayor, el nodo se convierte en Follower.
+
+   Comprueba que el candidato esté “up-to-date” (último índice/term).
+
+   Concede el voto si cumple las reglas y no ha votado aún.
+
+   Resetea el election timer al votar para evitar split-votes. */
 func (ns *NetworkService) RequestVote(ctx context.Context, req *pb.VoteRequest) (*pb.VoteResponse, error) {
 	rf := ns.node.raft
 	rf.mu.Lock()
@@ -208,6 +271,16 @@ func (ns *NetworkService) RequestVote(ctx context.Context, req *pb.VoteRequest) 
 }
 
 // ---------- RPC AppendEntries ---------- //
+/* Lógica de replicación/heartbeat:
+
+    Rechaza solicitudes con término obsoleto.
+
+    Con un término nuevo, hace stepDownToFollower.
+
+    Cualquier solicitud válida reinicia el election timer.
+
+    Llama a applyEntries(req) para alinear logs; si hay éxito,
+	avanza commitIndex al mínimo entre leaderCommit y log local, y lanza applyLogs() fuera del candado. */
 func (ns *NetworkService) AppendEntries(
 	ctx context.Context, req *pb.AppendRequest,
 ) (*pb.AppendResponse, error) {
@@ -252,7 +325,13 @@ func (ns *NetworkService) AppendEntries(
 }
 
 // ---------- RPC InstallSnapshot (stream) ---------- //
+/* Recibe un snapshot en chunks:
 
+   Concatena datos en bytes.Buffer hasta encontrar el chunk con IsLast=true.
+
+   Extrae LastIncludedIndex/Term y delega en raft.applySnapshot(buf, idx, term).
+
+   Envía un SnapshotAck con Success verdadero o falso. */
 func (ns *NetworkService) InstallSnapshot(stream pb.RaftService_InstallSnapshotServer) error {
 	var buf bytes.Buffer
 	var idx, term int64
@@ -279,7 +358,13 @@ func (ns *NetworkService) InstallSnapshot(stream pb.RaftService_InstallSnapshotS
 }
 
 // ---------- RPC JoinCluster ---------- //
+/* Permite que un nodo nuevo se una dinámicamente:
 
+   Solo el líder acepta la petición (codes.FailedPrecondition si no).
+
+   Crea un Peer con NewPeer; si el dial falla, se responde con Success=false.
+
+   Inserta el peer en leader.peers y confirma “bienvenido”. */
 func (ns *NetworkService) JoinCluster(ctx context.Context, req *pb.JoinRequest) (*pb.JoinResponse, error) {
 	leader := ns.node.raft
 	leader.mu.Lock()
@@ -300,7 +385,8 @@ func (ns *NetworkService) JoinCluster(ctx context.Context, req *pb.JoinRequest) 
 }
 
 /* ---------- FileManager ---------- */
-
+/* Abstrae el directorio base (FILE_BASE_DIR, default /app/files).
+ */
 type FileManager struct {
 	baseDir string
 }
@@ -313,15 +399,18 @@ func NewFileManager() *FileManager {
 	return &FileManager{baseDir: dir}
 }
 
+// ValidatePath – Comprueba que la ruta sea absoluta, normalizada y dentro de baseDir (previene path-traversal).
 func (fm *FileManager) ValidatePath(p string) bool {
 	clean := filepath.Clean(p)
 	return filepath.IsAbs(clean) && strings.HasPrefix(clean, fm.baseDir)
 }
+
+// Sync / SyncFromSnapshot – Place-holders para fsync o restaurar desde snapshot (aún vacíos en este fragmento).
 func (fm *FileManager) Sync()                     {}
 func (fm *FileManager) SyncFromSnapshot(_ []byte) {}
 
 // ---------- Helpers ---------- //
-
+// Devuelve el menor de dos enteros (se usa para recortar commitIndex).
 func min(a, b int) int {
 	if a < b {
 		return a
@@ -330,6 +419,7 @@ func min(a, b int) int {
 }
 
 /* ---------- utils ---------- */
+// 	Si err != nil devuelve err.Error(), de lo contrario un mensaje de éxito. Evita repetir lógica en cada RPC.
 func respMsg(err error, okMsg string) string {
 	if err != nil {
 		return err.Error()

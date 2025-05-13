@@ -37,6 +37,20 @@ type Node struct {
 
 /* ---------- constructor ---------- */
 
+/*Crea e inicializa un nodo Raft listo para arrancar:
+
+  Instancia la estructura Node (ID, dirección y gestor de archivos).
+
+  Construye la máquina de consenso (NewRaft), el snapshotter y el servicio gRPC.
+
+  Configura la política keep-alive del lado servidor para detectar clientes colgados.
+
+  Encadena dos interceptores (disponibilidad y liderazgo).
+
+  Registra la implementación del servicio RaftService.
+
+  Carga el estado persistente del nodo (logs y snapshot).*/
+
 func NewNode(id int, addr string, peers []*Peer) *Node {
 	n := &Node{
 		ID:      id,
@@ -65,10 +79,23 @@ func NewNode(id int, addr string, peers []*Peer) *Node {
 	return n
 }
 
+/*
+Intercepta cada RPC antes de ejecutarse:
+
+	Si el nodo es líder pero no hay quórum, responde codes.Unavailable, bloqueando operaciones de escritura mientras el clúster está “partido”.
+
+	De lo contrario, deja pasar la llamada al handler real.
+*/
 func (n *Node) connectionStateInterceptor() grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		// Si somos líder pero el clúster no tiene quórum, rechaza peticiones de cliente.
-		if n.raft.state == Leader && !n.raft.checkQuorum() {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler) (interface{}, error) {
+
+		n.raft.mu.RLock()
+		leader := n.raft.state == Leader
+		quorum := n.raft.checkQuorum()
+		n.raft.mu.RUnlock()
+
+		if leader && !quorum {
 			return nil, status.Error(codes.Unavailable, "cluster sin quórum")
 		}
 		return handler(ctx, req)
@@ -76,6 +103,22 @@ func (n *Node) connectionStateInterceptor() grpc.UnaryServerInterceptor {
 }
 
 /* ---------- arranque y parada ---------- */
+/*
+Arranca todos los servicios que componen el nodo:
+
+    Abre un net.Listener en el puerto 50051 dentro del contenedor.
+
+    Lanza el servidor gRPC en una goroutine.
+
+    Inicia snapshots automáticos cada 30 min.
+
+    Expone métricas Raft simples vía HTTP :8080/raft.
+
+    Espera activamente a que los peers definidos en PEER_ADDRS acepten TCP (sincroniza la puesta en marcha del clúster).
+
+    Para cada peer arranca un bucle de reconexión en segundo plano.
+
+    Registra en logs que el nodo está operativo. 	*/
 
 func (n *Node) Start() error {
 	lis, err := net.Listen("tcp", ":50051") // dentro del contenedor
@@ -112,6 +155,17 @@ func (n *Node) Start() error {
 	return nil
 }
 
+/*
+Detiene el nodo de forma ordenada:
+
+	Parada “graceful” del servidor gRPC (vacía las conexiones activas).
+
+	Sincroniza a disco el gestor de archivos (fileMgr.Sync).
+
+	Elimina snapshots temporales y persiste el estado Raft.
+
+	Escribe en logs que el nodo ha sido detenido.
+*/
 func (n *Node) Stop() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -125,6 +179,9 @@ func (n *Node) Stop() {
 }
 
 /* ---------- estado persistente ---------- */
+/* Al reiniciar, aplica el snapshot más reciente y deja que NewRaft
+cargue el log y el currentTerm. De esta forma, el nodo recupera su
+último estado consistente antes de un fallo.*/
 
 func (n *Node) loadPersistentState() {
 	if err := n.snapshotter.LoadLatest(); err != nil {
@@ -134,6 +191,13 @@ func (n *Node) loadPersistentState() {
 }
 
 // ---------- interceptores ---------- //
+/* Filtra solo las RPC del sistema de archivos que deben ejecutarse en el líder:
+
+   Mantiene una lista requiresLeader (TransferFile, DeleteFile, MkDir, RemoveDir).
+
+   Si llega otra RPC (AppendEntries, RequestVote…) la deja pasar.
+
+   Si el nodo no es líder, responde codes.FailedPrecondition. */
 func (n *Node) leaderInterceptor() grpc.UnaryServerInterceptor {
 	requiresLeader := map[string]bool{
 		"/proto.RaftService/TransferFile": true,
@@ -156,7 +220,11 @@ func (n *Node) leaderInterceptor() grpc.UnaryServerInterceptor {
 }
 
 /* ---------- métrica HTTP ---------- */
+/* Servicio HTTP mínimo para observabilidad:
 
+   Registra un handler /raft que muestra id, estado (Follower | Candidate | Leader), término vigente, índice commit y aplicado.
+
+   Escucha en :8080 y reporta la URL en logs. */
 func (n *Node) startMetricsHTTP() {
 	http.HandleFunc("/raft", func(w http.ResponseWriter, _ *http.Request) {
 		n.raft.mu.Lock()
@@ -172,7 +240,15 @@ func (n *Node) startMetricsHTTP() {
 /* ---------- utilidades ---------- */
 
 // LÓGICA PARA NODOS:
-// waitForPeers lee PEER_ADDRS="id@host:port,..." y espera a que cada host:port acepte TCP.
+/* Sincroniza el arranque del contenedor con el resto del clúster:
+
+   Parsea PEER_ADDRS con el formato id@host:port.
+
+   Ignora su propia dirección.
+
+   Para cada peer intenta abrir un tcp con reintentos exponenciales (“back-off” aleatorio).
+
+   Si un peer no responde tras N intentos, aborta todo el proceso (log.Fatalf) porque el clúster no puede formarse correctamente. */
 func waitForPeers(peersEnv, selfAddr string, retries int, backoff time.Duration) {
 	addrs := strings.Split(peersEnv, ",")
 	for _, raw := range addrs {
@@ -215,11 +291,17 @@ type SnapshotManager struct {
 	dir  string
 }
 
+// Calcula la ruta base (RAFT_DATA_DIR/node<id>/snapshots) y devuelve el gestor vinculado al nodo.
 func NewSnapshotManager(n *Node) *SnapshotManager {
 	base := filepath.Join(os.Getenv("RAFT_DATA_DIR"), fmt.Sprintf("node%d", n.ID))
 	return &SnapshotManager{node: n, dir: filepath.Join(base, "snapshots")}
 }
 
+/*
+	Cada interval (ticker) verifica si el nodo es líder;
+
+si lo es, dispara raft.takeSnapshot(). Así solo el líder crea imágenes compactadas del log.
+*/
 func (sm *SnapshotManager) AutoSnapshot(interval time.Duration) {
 	tk := time.NewTicker(interval)
 	defer tk.Stop()
@@ -230,10 +312,20 @@ func (sm *SnapshotManager) AutoSnapshot(interval time.Duration) {
 	}
 }
 
+/*
+	Durante el arranque aplica el snapshot más reciente al estado Raft (applySnapshot),
+
+usando el commitIndex y currentTerm actuales para mantener coherencia.
+*/
 func (sm *SnapshotManager) LoadLatest() error {
 	return sm.node.raft.applySnapshot(nil, int64(sm.node.raft.commitIndex), int64(sm.node.raft.currentTerm))
 }
 
+/*
+	Elimina archivos de snapshot del directorio cuando el nodo se detiene,
+
+evitando basura en disco dentro del contenedor.
+*/
 func (sm *SnapshotManager) Cleanup() {
 	if files, err := os.ReadDir(sm.dir); err == nil {
 		for _, f := range files {
