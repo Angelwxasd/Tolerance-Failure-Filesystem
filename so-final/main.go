@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"math/rand"
 	"net"
 	"os"
 	"os/signal"
@@ -9,12 +10,14 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // main arranca el servidor gRPC **antes** de intentar marcar a los peers.
 // Así evitamos el ciclo de bloqueo que ocurría cuando cada contenedor
 // intentaba conectarse mientras nadie escuchaba todavía.
 func main() {
+	rand.Seed(time.Now().UnixNano() + int64(os.Getpid())) // una semilla única por contenedor
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
 
 	/* ───── 1. Configuración básica ───── */
@@ -41,7 +44,7 @@ func main() {
 	}
 	os.Setenv("RAFT_DATA_DIR", raftDir) // para el resto del código
 
-	/* ───── 2. Construir lista de peers con IDs correctos ───── */
+	// 2. Construir lista de peers con IDs correctos y conexión gRPC lista
 	raw := strings.Split(os.Getenv("PEER_ADDRS"), ",")
 	seen := map[int]bool{}
 	peers := make([]*node.Peer, 0, len(raw))
@@ -53,7 +56,6 @@ func main() {
 			continue
 		}
 
-		// extraer id@host:port  ó  host:port
 		var pid int
 		var addr string
 
@@ -64,7 +66,6 @@ func main() {
 			}
 			addr = parts[1]
 		} else {
-			// respaldo: asigna id incremental que no choque
 			for seen[nextFallbackID] || nextFallbackID == nodeID {
 				nextFallbackID++
 			}
@@ -72,18 +73,23 @@ func main() {
 			addr = entry
 		}
 
-		if pid == nodeID || addr == nodeAddr {
-			continue // evita agregarse a sí mismo
+		if pid == nodeID || addr == nodeAddr { // evitar agregarse
+			continue
 		}
 		if _, _, err := net.SplitHostPort(addr); err != nil {
-			log.Fatalf("PEER_ADDRS: formato host:port inválido en %q", entry)
+			log.Fatalf("PEER_ADDRS: host:port inválido en %q", entry)
 		}
 		if seen[pid] {
 			log.Fatalf("PEER_ADDRS: id %d duplicado", pid)
 		}
 		seen[pid] = true
 
-		peers = append(peers, &node.Peer{ID: pid, Address: addr}) // conn se abrirá dentro del nodo
+		/* ------------- CAMBIO FUNDAMENTAL ------------- */
+		peer, err := node.NewPeer(pid, addr) // ← Esto llama dial()
+		if err != nil {
+			log.Printf("[Nodo %d] peer %s aún no disponible: %v", nodeID, addr, err)
+		}
+		peers = append(peers, peer)
 	}
 
 	/* ───── 3. Inicializar y arrancar nodo ───── */

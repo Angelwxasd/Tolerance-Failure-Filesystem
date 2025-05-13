@@ -48,13 +48,24 @@ func NewNode(id int, addr string, peers []*Peer) *Node {
 	svc := &NetworkService{node: n, fileMgr: n.fileMgr}
 	n.server = grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
-			n.leaderInterceptor(),
+			n.connectionStateInterceptor(),
+			n.leaderInterceptor(), // versión filtrada solo para RPC de FS
 		),
 	)
 	pb.RegisterRaftServiceServer(n.server, svc)
 
 	n.loadPersistentState()
 	return n
+}
+
+func (n *Node) connectionStateInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// Si somos líder pero el clúster no tiene quórum, rechaza peticiones de cliente.
+		if n.raft.state == Leader && !n.raft.checkQuorum() {
+			return nil, status.Error(codes.Unavailable, "cluster sin quórum")
+		}
+		return handler(ctx, req)
+	}
 }
 
 /* ---------- arranque y parada ---------- */
@@ -76,6 +87,19 @@ func (n *Node) Start() error {
 
 	// esperar peers antes de operar
 	waitForPeers(os.Getenv("PEER_ADDRS"), n.Address, 10, 500*time.Millisecond)
+
+	// 2️⃣ – ahora sí, marcar/reconectar a cada peer en segundo plano
+	for _, p := range n.raft.peers {
+		if p == nil {
+			continue
+		}
+		go func(pr *Peer) { // ← sin node.
+			for !pr.IsActive() {
+				pr.Reconnect()
+				time.Sleep(2 * time.Second)
+			}
+		}(p)
+	}
 
 	log.Printf("[Nodo %d] operativo en %s", n.ID, n.Address)
 	return nil
@@ -104,28 +128,19 @@ func (n *Node) loadPersistentState() {
 
 // ---------- interceptores ---------- //
 func (n *Node) leaderInterceptor() grpc.UnaryServerInterceptor {
-	// Métodos que requieren líder
 	requiresLeader := map[string]bool{
 		"/proto.RaftService/TransferFile": true,
 		"/proto.RaftService/DeleteFile":   true,
 		"/proto.RaftService/MkDir":        true,
 		"/proto.RaftService/RemoveDir":    true,
 	}
-
-	return func(ctx context.Context, req interface{},
-		info *grpc.UnaryServerInfo,
-		handler grpc.UnaryHandler) (interface{}, error) {
-
-		// Deja pasar siempre las RPC internas de Raft
-		if !requiresLeader[info.FullMethod] {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		if !requiresLeader[info.FullMethod] { // ← Deja pasar RequestVote, AppendEntries…
 			return handler(ctx, req)
 		}
-
-		// Solo las de sistema de archivos exigen líder
 		n.raft.mu.Lock()
 		isLeader := n.raft.state == Leader && n.raft.id == n.ID
 		n.raft.mu.Unlock()
-
 		if !isLeader {
 			return nil, status.Error(codes.FailedPrecondition, "no soy líder")
 		}

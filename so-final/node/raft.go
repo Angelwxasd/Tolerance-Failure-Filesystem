@@ -84,7 +84,15 @@ type Raft struct {
 /* ---------- constructor ---------- */
 
 func NewRaft(id int, peers []*Peer) *Raft {
-	size := len(peers) + 1 // IDs desde 1
+	// ─── 1. Calcular el ID máximo ────────────────────────────────────────────────
+	maxID := id
+	for _, p := range peers {
+		if p != nil && p.ID > maxID {
+			maxID = p.ID
+		}
+	}
+
+	size := maxID + 1 // índices válidos 0 … maxID (incluye huecos)
 	rf := &Raft{
 		id:         id,
 		votedFor:   -1,
@@ -95,9 +103,11 @@ func NewRaft(id int, peers []*Peer) *Raft {
 		matchIndex: make([]int, size),
 	}
 
+	// ─── 2. Inicializar usando snapshot (si existe) ──────────────────────────────
 	rf.mu.Lock()
 	rf.loadSnapshot()
 	rf.loadStateInternal()
+
 	if rf.lastIncludedIndex > 0 {
 		for i := range rf.nextIndex {
 			rf.nextIndex[i] = rf.lastIncludedIndex + 1
@@ -107,6 +117,7 @@ func NewRaft(id int, peers []*Peer) *Raft {
 	}
 	rf.mu.Unlock()
 
+	// ─── 3. Arranque ─────────────────────────────────────────────────────────────
 	rf.saveState()
 	rf.resetElectionTimer()
 	log.Printf("[Nodo %d] follower listo", id)
@@ -216,7 +227,7 @@ func (rf *Raft) applySnapshot(data []byte, idx, term int64) error {
 
 /* ---------- timers ---------- */
 
-func timeout() time.Duration { return time.Duration(rand.Intn(150)+150) * time.Millisecond }
+func timeout() time.Duration { return time.Duration(rand.Intn(400)+400) * time.Millisecond }
 
 func (rf *Raft) resetElectionTimer() {
 	if rf.electionTimer != nil {
@@ -262,7 +273,9 @@ func (rf *Raft) startElection() {
 				if resp.Term > int64(rf.currentTerm) {
 					rf.stepDownToFollower(int(resp.Term))
 				} else if resp.VoteGranted && rf.state == Candidate {
-					if atomic.AddInt32(&votes, 1) > int32(len(rf.peers)/2) {
+					// ahora (N nodos = len(peers)+1; mayoría = N/2 redondeado ↑)
+					majority := (len(rf.peers)+1)/2 + 1 // 3 en un clúster de 4
+					if atomic.AddInt32(&votes, 1) >= int32(majority) {
 						rf.becomeLeader()
 					}
 				}
@@ -493,18 +506,36 @@ func (rf *Raft) applyLogs() {
 // must be called with rf.mu locked (only by the leader)
 func (rf *Raft) updateCommitIndex() {
 	for n := rf.commitIndex + 1; n <= rf.lastIncludedIndex+len(rf.log); n++ {
-		count := 1 // líder
+		votes := 1 // el líder ya lo tiene replicado
 		for _, p := range rf.peers {
-			if p.ID == rf.id {
-				continue
-			}
-			if rf.matchIndex[p.ID] >= n {
-				count++
+			if p.ID != rf.id && rf.matchIndex[p.ID] >= n {
+				votes++
 			}
 		}
-		if count > len(rf.peers)/2 && rf.log[n-rf.lastIncludedIndex-1].Term == rf.currentTerm {
+		// ⬇️ mayoría correcta
+		if votes >= rf.quorumSize() &&
+			rf.log[n-rf.lastIncludedIndex-1].Term == rf.currentTerm {
 			rf.commitIndex = n
 		}
 	}
 	go rf.applyLogs()
+}
+
+// ---------- quorum helper ----------
+
+// Devuelve true si el número de peers con conexión READY
+// + el propio nodo alcanza la mayoría necesaria.
+func (rf *Raft) checkQuorum() bool {
+	active := 1 // nos contamos a nosotros mismos
+	for _, p := range rf.peers {
+		if p != nil && p.IsActive() {
+			active++
+		}
+	}
+	return active >= rf.quorumSize()
+}
+
+// quorumSize devuelve N/2 redondeado ↑ (mayoría estricta)
+func (rf *Raft) quorumSize() int {
+	return (len(rf.peers)+1)/2 + 1
 }

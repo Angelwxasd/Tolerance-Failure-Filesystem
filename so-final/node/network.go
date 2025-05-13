@@ -84,12 +84,13 @@ func (p *Peer) dial() error {
 	return nil
 }
 
+// node/network.go
 func (p *Peer) watch() {
 	for {
-		if p.conn == nil {
-			return
+		if p.conn == nil || p.conn.GetState() != connectivity.Ready {
+			p.Reconnect() // ← intenta marcar de nuevo
 		}
-		p.isActive.Store(p.conn.GetState() == connectivity.Ready)
+		p.isActive.Store(p.conn != nil && p.conn.GetState() == connectivity.Ready)
 		time.Sleep(2 * time.Second)
 	}
 }
@@ -213,50 +214,40 @@ func (ns *NetworkService) AppendEntries(
 
 	rf := ns.node.raft
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
 	resp := &pb.AppendResponse{Term: int64(rf.currentTerm), Success: false}
 
-	// 1. Actualizar término si el del líder es mayor
+	// 1. Mandato desfasado → rechazamos sin tocar el timer
+	if int(req.Term) < rf.currentTerm {
+		return resp, nil
+	}
+
+	// 2. Término nuevo → nos volvemos follower
 	if int(req.Term) > rf.currentTerm {
 		rf.stepDownToFollower(int(req.Term))
 	}
 
-	// 2. Si el índice previo está en el snapshot, el líder reenviará snapshot
-	if int(req.PrevLogIndex) < rf.lastIncludedIndex {
-		rf.mu.Unlock()
-		return resp, nil
-	}
+	// 🔑 3. CUALQUIER AppendEntries válido reinicia el timer
+	rf.resetElectionTimer()
 
-	/* -------------------------------------------------------------------- */
-	/* 3. Aplicar entradas del mensaje y, si todo fue coherente,            */
-	/*    avanzar commitIndex. Nos llevamos un flag para aplicar logs fuera */
-	/*    del lock (evita trabajo pesado con el mutex tomado).             */
-	/* -------------------------------------------------------------------- */
-
-	needApply := false
+	/* ------------------------------------------------------------------ */
+	/* 4. Intentamos emparejar logs y, si procede, adelantamos commit.    */
+	/* ------------------------------------------------------------------ */
 
 	if rf.applyEntries(req) {
-		// commitIndex no puede exceder el índice del último log local
 		newCommit := min(
 			int(req.LeaderCommit),
 			rf.lastIncludedIndex+len(rf.log),
 		)
-
 		if newCommit > rf.commitIndex {
 			rf.commitIndex = newCommit
-			needApply = true
+			go rf.applyLogs() // fuera del lock
 		}
-		rf.resetElectionTimer()
 		resp.Success = true
 	}
 
 	resp.Term = int64(rf.currentTerm)
-	rf.mu.Unlock()
-
-	// 4. Aplica las entradas confirmadas fuera del lock
-	if needApply {
-		go rf.applyLogs()
-	}
 	return resp, nil
 }
 
