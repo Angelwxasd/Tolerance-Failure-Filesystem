@@ -140,6 +140,7 @@ func NewRaft(id int, peers []*Peer) *Raft {
 	if rf.lastIncludedIndex > 0 {
 		for i := range rf.nextIndex {
 			rf.nextIndex[i] = rf.lastIncludedIndex + 1
+			log.Printf("[Nodo %d] nextIndex[%d] = %d", rf.id, i, rf.nextIndex[i])
 		}
 		rf.commitIndex = rf.lastIncludedIndex
 		rf.lastApplied = rf.lastIncludedIndex
@@ -230,22 +231,42 @@ func (rf *Raft) loadStateInternal() {
 
 /* ---------- snapshot mínimo ---------- */
 // Si existe snapshot.bin, delega en applySnapshot.
+// Carga el snapshot si existe
 func (rf *Raft) loadSnapshot() {
 	snap := path.Join(rf.dir(), "snapshot.bin")
-	if data, err := os.ReadFile(snap); err == nil {
-		rf.applySnapshot(data, 0, 0)
+	if data, err := os.ReadFile(snap); err == nil && len(data) > 0 {
+		// Parsear el contenido del snapshot para extraer metadatos
+		var info struct{ LastIncludedIndex, LastIncludedTerm int }
+		if json.Unmarshal(data, &info) == nil {
+			// Si se parsean correctamente los metadatos, aplicar el snapshot con ellos
+			log.Printf("[Nodo %d] Snapshot cargado: lastIncludedIndex=%d, lastIncludedTerm=%d", rf.id, info.LastIncludedIndex, info.LastIncludedTerm)
+			rf.applySnapshot(data, int64(info.LastIncludedIndex), int64(info.LastIncludedTerm))
+		} else {
+			log.Printf("[Nodo %d] Fallo al parsear snapshot.json: %v", rf.id, err)
+			// Si el snapshot no es parseable, tratarlo como vacío (no sobrescribir el log)
+			rf.applySnapshot(data, 0, 0)
+		}
+	} else {
+		log.Printf("[Nodo %d] No se encontró o no se pudo leer snapshot.bin: %v", rf.id, err)
+		// Si no existe o es vacío, no hacer nada (preservar el log)
 	}
 }
 
 //	Líder guarda {LastIncludedIndex, LastIncludedTerm} como JSON.
 //
 // No almacena el contenido de archivos (simplificado).
+// Genera un snapshot y lo escribe en disco
 func (rf *Raft) takeSnapshot() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	info := struct{ LastIncludedIndex, LastIncludedTerm int }{rf.commitIndex, rf.currentTerm}
 	b, _ := json.Marshal(info)
-	os.WriteFile(path.Join(rf.dir(), "snapshot.bin"), b, 0o644)
+	snapPath := path.Join(rf.dir(), "snapshot.bin")
+	if err := os.WriteFile(snapPath, b, 0o644); err != nil {
+		log.Printf("[Nodo %d] Error escribiendo snapshot: %v", rf.id, err)
+	} else {
+		log.Printf("[Nodo %d] Snapshot guardado: %s", rf.id, snapPath)
+	}
 }
 
 //	Actualiza índices (lastIncluded*), descarta log anterior y sobrescribe snapshot en memoria.
@@ -254,12 +275,23 @@ func (rf *Raft) takeSnapshot() {
 func (rf *Raft) applySnapshot(data []byte, idx, term int64) error {
 	rf.snapLock.Lock()
 	defer rf.snapLock.Unlock()
-	rf.lastIncludedIndex = int(idx)
-	rf.lastIncludedTerm = int(term)
-	rf.log = nil
-	rf.commitIndex = rf.lastIncludedIndex
-	rf.lastApplied = rf.lastIncludedIndex
-	rf.snapshot = data
+
+	// Solo aplicar el snapshot si idx > 0 (no es el estado inicial)
+	if idx > 0 {
+		rf.lastIncludedIndex = int(idx)
+		rf.lastIncludedTerm = int(term)
+		log.Printf("[Nodo %d] Snapshot aplicado: lastIncludedIndex=%d, lastIncludedTerm=%d", rf.id, rf.lastIncludedIndex, rf.lastIncludedTerm)
+
+		// Truncar el log solo si el snapshot no es vacío
+		rf.log = nil
+
+		// Actualizar commitIndex y lastApplied
+		rf.commitIndex = rf.lastIncludedIndex
+		rf.lastApplied = rf.lastIncludedIndex
+
+		// Guardar los datos del snapshot
+		rf.snapshot = data
+	}
 	return nil
 }
 
@@ -439,7 +471,7 @@ func (rf *Raft) syncNode(peer *Peer) error {
 	}
 	rf.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	resp, err := peer.client.AppendEntries(ctx, args)
 	if err != nil {
@@ -458,7 +490,9 @@ func (rf *Raft) syncNode(peer *Peer) error {
 		rf.updateCommitIndex()
 		rf.saveStateLocked()
 	} else {
+		// Retroceso exponencial: reduce nextIndex en 1 o más si es necesario
 		rf.nextIndex[peer.ID] = max(1, rf.nextIndex[peer.ID]-1)
+		log.Printf("[Nodo %d] ajustando nextIndex[%d] a %d", rf.id, peer.ID, rf.nextIndex[peer.ID])
 	}
 	return nil
 }
@@ -476,14 +510,16 @@ func (rf *Raft) logSliceFrom(idx int) []LogEntry {
 func (rf *Raft) applyEntries(req *pb.AppendRequest) bool {
 	prev := int(req.PrevLogIndex) - rf.lastIncludedIndex
 	if prev < 0 || prev >= len(rf.log) {
+		log.Printf("[Nodo %d] appendEntries: índice previo inválido (%d >= %d)", rf.id, prev, len(rf.log))
 		return false
 	}
 	if rf.log[prev].Term != int(req.PrevLogTerm) {
+		log.Printf("[Nodo %d] appendEntries: desincronización de logs. Término esperado %d vs recibido %d",
+			rf.id, rf.log[prev].Term, req.PrevLogTerm)
 		rf.log = rf.log[:prev]
 		return false
 	}
 
-	// agregar nuevas
 	for _, pe := range req.Entries {
 		var fc pb.FileCommand
 		if proto.Unmarshal(pe.Command, &fc) != nil {
@@ -540,6 +576,7 @@ func (rf *Raft) applyLogs() {
 		entry := rf.log[rel]
 		cmd, ok := entry.Command.(*pb.FileCommand)
 		if !ok {
+			log.Fatalf("[Nodo %d] comando inválido en índice %d", rf.id, rf.lastApplied)
 			continue // entrada no reconocida
 		}
 
@@ -547,27 +584,24 @@ func (rf *Raft) applyLogs() {
 
 		switch cmd.Op {
 		case pb.FileCommand_TRANSFER:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				log.Printf("mkdir %s: %v", filepath.Dir(target), err)
-				continue
+			dir := filepath.Dir(target)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				log.Fatalf("[Nodo %d] error al crear directorio %s: %v", rf.id, dir, err)
 			}
 			if err := os.WriteFile(target, cmd.Content, 0o644); err != nil {
-				log.Printf("write %s: %v", target, err)
+				log.Fatalf("[Nodo %d] error al escribir %s: %v", rf.id, target, err)
 			}
-
 		case pb.FileCommand_DELETE:
 			if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
-				log.Printf("remove %s: %v", target, err)
+				log.Fatalf("[Nodo %d] error al borrar %s: %v", rf.id, target, err)
 			}
-
 		case pb.FileCommand_MKDIR:
 			if err := os.MkdirAll(target, 0o755); err != nil {
-				log.Printf("mkdir %s: %v", target, err)
+				log.Fatalf("[Nodo %d] error al crear directorio %s: %v", rf.id, target, err)
 			}
-
 		case pb.FileCommand_RMDIR:
 			if err := os.RemoveAll(target); err != nil && !os.IsNotExist(err) {
-				log.Printf("rmdir %s: %v", target, err)
+				log.Fatalf("[Nodo %d] error al eliminar directorio %s: %v", rf.id, target, err)
 			}
 		}
 	}
@@ -612,5 +646,11 @@ func (rf *Raft) checkQuorum() bool {
 
 // quorumSize devuelve N/2 redondeado ↑ (mayoría estricta)
 func (rf *Raft) quorumSize() int {
-	return (len(rf.peers)+1)/2 + 1
+	activePeers := 0
+	for _, p := range rf.peers {
+		if p != nil && p.IsActive() {
+			activePeers++
+		}
+	}
+	return (activePeers + 1 + 1) / 2 // Mayoría estricta de nodos activos
 }

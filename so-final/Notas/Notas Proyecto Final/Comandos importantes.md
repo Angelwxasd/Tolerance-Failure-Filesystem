@@ -102,3 +102,19 @@ https://github.com/debajyotidasgupta/raft-consensus
 
 #### Eliminar imágenes huérfanas
     docker image prune -a
+
+
+
+# COMANDO PARA SABER QUÍEN ES LÍDER:
+for i in {1..4}; do curl -s localhost:$((8080+i))/raft; done
+# DEBUG DE ARCHIVOS:
+
+grpcurl -plaintext -import-path proto -proto proto/file.proto \
+  -d '{"dirname":"/app/files/docs"}' \
+  localhost:5005X proto.RaftService/MkDir
+
+DATA=$(echo -n "hola\n" | base64)
+
+grpcurl -plaintext -import-path proto -proto proto/file.proto \
+  -d '{"filename":"/app/files/docs/hola.txt","content":"'"$DATA"'"}' \
+  localhost:505X proto.RaftService/TransferFile

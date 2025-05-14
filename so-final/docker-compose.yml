@@ -21,6 +21,8 @@ volumes:
   raft2_data: {}
   raft3_data: {}
   raft4_data: {}
+  shared_files: {}
+  shared_raft_data: {}
 
 ############################
 #         SERVICES         #
@@ -45,8 +47,8 @@ services:
       - "50051:50051"   # gRPC
       - "8081:8080"     # métricas HTTP
     volumes:
-      - node1_data:/app/files
-      - raft1_data:/app/raft-data
+      - shared_files:/app/files
+      - shared_raft_data:/app/raft-data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/raft"]
       interval: 20s
@@ -71,8 +73,8 @@ services:
       - "50052:50051"
       - "8082:8080"
     volumes:
-      - node2_data:/app/files
-      - raft2_data:/app/raft-data
+      - shared_files:/app/files
+      - shared_raft_data:/app/raft-data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/raft"]
       interval: 20s
@@ -97,8 +99,8 @@ services:
       - "50053:50051"
       - "8083:8080"
     volumes:
-      - node3_data:/app/files
-      - raft3_data:/app/raft-data
+      - shared_files:/app/files
+      - shared_raft_data:/app/raft-data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/raft"]
       interval: 20s
@@ -123,8 +125,8 @@ services:
       - "50054:50051"
       - "8084:8080"
     volumes:
-      - node4_data:/app/files
-      - raft4_data:/app/raft-data
+      - shared_files:/app/files
+      - shared_raft_data:/app/raft-data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/raft"]
       interval: 20s
