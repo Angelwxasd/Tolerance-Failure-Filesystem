@@ -297,7 +297,7 @@ func (rf *Raft) applySnapshot(data []byte, idx, term int64) error {
 
 /* ---------- timers ---------- */
 // Devuelve un random 400-800 ms (previene colisiones de elecciones).
-func timeout() time.Duration { return time.Duration(rand.Intn(400)+400) * time.Millisecond }
+func timeout() time.Duration { return time.Duration(rand.Intn(800)+800) * time.Millisecond }
 
 // Cancela el anterior, programa un nuevo time.AfterFunc. Si expira y no somos líder ⇒ startElection().
 func (rf *Raft) resetElectionTimer() {
@@ -561,7 +561,7 @@ func (rf *Raft) applyLogs() {
 
 	base := os.Getenv("FILE_BASE_DIR")
 	if base == "" {
-		base = "/app/files"
+		base = "/srv/files"
 	}
 
 	for rf.lastApplied < rf.commitIndex {

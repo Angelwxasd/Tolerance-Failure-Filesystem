@@ -394,7 +394,7 @@ type FileManager struct {
 func NewFileManager() *FileManager {
 	dir := os.Getenv("FILE_BASE_DIR")
 	if dir == "" {
-		dir = "/app/files"
+		dir = "/srv/files"
 	}
 	return &FileManager{baseDir: dir}
 }

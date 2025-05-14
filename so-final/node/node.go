@@ -136,7 +136,7 @@ func (n *Node) Start() error {
 	go n.startMetricsHTTP()
 
 	// esperar peers antes de operar
-	waitForPeers(os.Getenv("PEER_ADDRS"), n.Address, 10, 500*time.Millisecond)
+	//waitForPeers(os.Getenv("PEER_ADDRS"), n.Address, 100, 500*time.Millisecond)
 
 	// 2️⃣ – ahora sí, marcar/reconectar a cada peer en segundo plano
 	for _, p := range n.raft.peers {

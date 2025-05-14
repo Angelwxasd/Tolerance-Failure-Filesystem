@@ -37,7 +37,7 @@ func main() {
 
 	raftDir := os.Getenv("RAFT_DATA_DIR")
 	if raftDir == "" {
-		raftDir = "/app/raft-data"
+		raftDir = "/srv/raft-data"
 	}
 	if err := os.MkdirAll(raftDir, 0o755); err != nil {
 		log.Fatalf("Error creando RAFT_DATA_DIR: %v", err)
