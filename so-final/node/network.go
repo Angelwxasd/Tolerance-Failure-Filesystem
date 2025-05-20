@@ -3,8 +3,10 @@ package node
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -252,20 +254,31 @@ func (ns *NetworkService) RequestVote(ctx context.Context, req *pb.VoteRequest) 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	resp := &pb.VoteResponse{Term: int64(rf.currentTerm), VoteGranted: false}
+	// Preparo la respuesta con el término actual por defecto
+	resp := &pb.VoteResponse{
+		Term:        int64(rf.currentTerm),
+		VoteGranted: false,
+	}
 
+	// Si el candidato viene con un término superior, bajo a follower
 	if int(req.Term) > rf.currentTerm {
 		rf.stepDownToFollower(int(req.Term))
 	}
 
+	// Compruebo si el log del candidato está "tan al día o más" que el mío
 	lastIdx, lastTerm := rf.getLastLogInfo()
-	upToDate := req.LastLogTerm > int64(lastTerm) || (req.LastLogTerm == int64(lastTerm) && req.LastLogIndex >= int64(lastIdx))
+	upToDate := req.LastLogTerm > int64(lastTerm) ||
+		(req.LastLogTerm == int64(lastTerm) && req.LastLogIndex >= int64(lastIdx))
 
+	// Concedo el voto si no he votado aún en este término (o ya voté al mismo candidato)
 	if upToDate && (rf.votedFor == -1 || rf.votedFor == int(req.CandidateId)) {
 		rf.votedFor = int(req.CandidateId)
-		rf.resetElectionTimer()
+		rf.persistState()       // guarda votedFor y currentTerm en disco
+		rf.resetElectionTimer() // reinicio el timeout de elección
 		resp.VoteGranted = true
 	}
+
+	// Actualizo el término en la respuesta (por si stepDown cambió rf.currentTerm)
 	resp.Term = int64(rf.currentTerm)
 	return resp, nil
 }
@@ -402,7 +415,10 @@ func NewFileManager() *FileManager {
 // ValidatePath – Comprueba que la ruta sea absoluta, normalizada y dentro de baseDir (previene path-traversal).
 func (fm *FileManager) ValidatePath(p string) bool {
 	clean := filepath.Clean(p)
-	return filepath.IsAbs(clean) && strings.HasPrefix(clean, fm.baseDir)
+	if !filepath.IsAbs(clean) {
+		clean = filepath.Join(fm.baseDir, clean)
+	}
+	return strings.HasPrefix(clean, fm.baseDir)
 }
 
 // Sync / SyncFromSnapshot – Place-holders para fsync o restaurar desde snapshot (aún vacíos en este fragmento).
@@ -432,4 +448,48 @@ func msg(err error, ok string) string {
 		return err.Error()
 	}
 	return ok
+}
+
+// llama a persistState justo después de cambiar rf.currentTerm o rf.votedFor
+func (rf *Raft) persistState() {
+	// 1) Estructura mínima a serializar
+	state := struct {
+		Term     int `json:"currentTerm"`
+		VotedFor int `json:"votedFor"`
+	}{
+		Term:     rf.currentTerm,
+		VotedFor: rf.votedFor,
+	}
+
+	// 2) Serializo a JSON
+	data, err := json.Marshal(state)
+	if err != nil {
+		log.Fatalf("Raft.persistState: error al serializar estado: %v", err)
+	}
+
+	// 3) Escribo atómicamente al disco
+	file := filepath.Join(rf.dataDir, "state.json")
+	if err := ioutil.WriteFile(file, data, 0644); err != nil {
+		log.Fatalf("Raft.persistState: error al escribir %s: %v", file, err)
+	}
+}
+
+func (rf *Raft) readPersist() {
+	file := filepath.Join(rf.dataDir, "state.json")
+	data, err := ioutil.ReadFile(file)
+	if err != nil {
+		// si no existe, es la primera vez: currentTerm=0, votedFor=-1
+		rf.currentTerm = 0
+		rf.votedFor = -1
+		return
+	}
+	var state struct {
+		Term     int `json:"currentTerm"`
+		VotedFor int `json:"votedFor"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		log.Fatalf("Raft.readPersist: error al deserializar %s: %v", file, err)
+	}
+	rf.currentTerm = state.Term
+	rf.votedFor = state.VotedFor
 }

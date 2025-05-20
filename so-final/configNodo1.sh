@@ -10,7 +10,8 @@ export NODE_ADDR=192.168.1.10:50051
 ## 2. Direcciones de los peers (TODOS los demás)
 # Javier NODO 2
 # Moisés NODO 3
-export PEER_ADDRS=2@172.26.165.149:50051,3@172.31.0.21:50051,4@192.168.1.13:50051
+ export PEER_ADDRS=2@172.26.165.149:50051,3@172.31.0.21:50051,4@192.168.1.13:50051
+# export PEER_ADDRS="" 
 
 ## 3. Carpetas locales
 export RAFT_DATA_DIR=$HOME/srv/raft1

@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 )
 
@@ -58,6 +59,8 @@ func NewNode(id int, addr string, peers []*Peer) *Node {
 		fileMgr: NewFileManager(),
 	}
 	n.raft = NewRaft(id, peers)
+	// ⬇️ Refuerza la recuperación de estado Raft
+	n.raft.readPersist()
 	n.snapshotter = NewSnapshotManager(n)
 	// ─── keep-alive del lado servidor ────────────────────────────────
 	kaep := keepalive.EnforcementPolicy{
@@ -74,6 +77,7 @@ func NewNode(id int, addr string, peers []*Peer) *Node {
 		),
 	)
 	pb.RegisterRaftServiceServer(n.server, svc)
+	reflection.Register(n.server)
 
 	n.loadPersistentState()
 	return n

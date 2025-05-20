@@ -74,6 +74,7 @@ type Raft struct {
 
 	id          int
 	currentTerm int
+	dataDir     string // ruta al directorio de datos
 	votedFor    int
 	log         []LogEntry
 
@@ -130,10 +131,12 @@ func NewRaft(id int, peers []*Peer) *Raft {
 		peers:      peers,
 		nextIndex:  make([]int, size),
 		matchIndex: make([]int, size),
+		dataDir:    os.Getenv("RAFT_DATA_DIR"),
 	}
 
 	// 2. Inicializar con snapshot --------------------------------------
 	rf.mu.Lock()
+	rf.readPersist() // lee currentTerm y votedFor desde disk
 	rf.loadSnapshot()
 	rf.loadStateInternal()
 
@@ -145,7 +148,14 @@ func NewRaft(id int, peers []*Peer) *Raft {
 		rf.commitIndex = rf.lastIncludedIndex
 		rf.lastApplied = rf.lastIncludedIndex
 	}
+
 	rf.mu.Unlock()
+
+	// Si hay comandos commit-eados que aún no se han aplicado tras el reinicio,
+	// vuelve a aplicarlos al sistema de archivos.
+	if rf.lastApplied < rf.commitIndex {
+		go rf.applyLogs()
+	}
 
 	// 3. Arranque -------------------------------------------------------
 	rf.saveState()
@@ -327,6 +337,7 @@ func (rf *Raft) startElection() {
 	rf.state = Candidate
 	rf.currentTerm++
 	rf.votedFor = rf.id
+	rf.persistState() // guarda currentTerm y votedFor
 
 	lastIdx, lastTerm := rf.getLastLogInfo()
 	args := &pb.VoteRequest{
@@ -336,7 +347,16 @@ func (rf *Raft) startElection() {
 		LastLogTerm:  int64(lastTerm),
 	}
 
-	var votes int32 = 1
+	var votes int32 = 1         // me voto a mí mismo
+	majority := rf.quorumSize() // 🔑 mayoría dinámica
+
+	// ───────── Chequeo inmediato ─────────
+	if majority == 1 { // soy el único nodo vivo
+		rf.becomeLeader()
+		return // nada más que hacer
+	}
+	// ─────────────────────────────────────
+
 	var wg sync.WaitGroup
 	for _, p := range rf.peers {
 		if p.ID == rf.id || p.client == nil {
@@ -352,8 +372,6 @@ func (rf *Raft) startElection() {
 				if resp.Term > int64(rf.currentTerm) {
 					rf.stepDownToFollower(int(resp.Term))
 				} else if resp.VoteGranted && rf.state == Candidate {
-					// ahora (N nodos = len(peers)+1; mayoría = N/2 redondeado ↑)
-					majority := (len(rf.peers)+1)/2 + 1 // 3 en un clúster de 4
 					if atomic.AddInt32(&votes, 1) >= int32(majority) {
 						rf.becomeLeader()
 					}
@@ -362,6 +380,7 @@ func (rf *Raft) startElection() {
 			}
 		}(p)
 	}
+
 	go func() {
 		wg.Wait()
 		rf.mu.Lock()
@@ -381,8 +400,9 @@ func (rf *Raft) stepDownToFollower(term int) {
 	rf.currentTerm = term
 	rf.state = Follower
 	rf.votedFor = -1
+	rf.persistState()
 	rf.resetElectionTimer()
-	rf.saveStateLocked()
+	// rf.saveStateLocked() ya no hace falta para term/votedFor
 }
 
 /*
@@ -550,6 +570,14 @@ func (rf *Raft) ProposeCommand(cmd *pb.FileCommand) error {
 	rf.log = append(rf.log, LogEntry{Term: rf.currentTerm, Command: cmd})
 	rf.matchIndex[rf.id] = rf.lastIncludedIndex + len(rf.log) - 1
 	rf.saveStateLocked()
+
+	// 🔑 Si la mayoría necesaria es 1 (clúster en solitario),
+	//     marcamos la entrada como commit-eada y la aplicamos de inmediato.
+	if rf.quorumSize() == 1 {
+		rf.commitIndex = rf.matchIndex[rf.id]
+		go rf.applyLogs()
+	}
+
 	go rf.sendHeartbeats()
 	return nil
 }
@@ -644,13 +672,19 @@ func (rf *Raft) checkQuorum() bool {
 	return active >= rf.quorumSize()
 }
 
-// quorumSize devuelve N/2 redondeado ↑ (mayoría estricta)
+// quorumSize devuelve el número mínimo de votos necesarios para ganar
+// teniendo en cuenta sólo a los peers activos + uno mismo.
 func (rf *Raft) quorumSize() int {
-	activePeers := 0
-	for _, p := range rf.peers {
-		if p != nil && p.IsActive() {
-			activePeers++
+	alive := 1 // me cuento a mí
+	for _, peer := range rf.peers {
+		if peer.IsActive() { // tu método para saber si el peer responde
+			alive++
 		}
 	}
-	return (activePeers + 1 + 1) / 2 // Mayoría estricta de nodos activos
+	// Si quedan 2 o menos nodos vivos, BOTH forman la mayoría.
+	if alive <= 2 {
+		return alive
+	}
+	// Regla clásica de Raft: floor(alive/2) + 1
+	return alive/2 + 1
 }
