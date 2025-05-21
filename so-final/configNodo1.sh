@@ -5,7 +5,7 @@
 
 ## 1. Variables de identidad
 export NODE_ID=1
-export NODE_ADDR=192.168.1.10:50051
+export NODE_ADDR=localhost:50051
 
 ## 2. Direcciones de los peers (TODOS los demás)
 # Javier NODO 2
@@ -23,5 +23,5 @@ mkdir -p "$RAFT_DATA_DIR" "$FILE_BASE_DIR"
 #   - Si ya tienes el ejecutable compilado ("nodo"), usa exec para
 #     reemplazar el script por el proceso Go (mejor gestión de señales).
 #   - Si prefieres compilar al vuelo, descomenta la línea go run .
-exec ./main "$@"
+exec ./nodo "$@"
 # go run .   # ← alternativa sin compilar previamente
