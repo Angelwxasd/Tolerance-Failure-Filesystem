@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -148,52 +149,82 @@ func (p *Peer) IsActive() bool { return p.isActive.Load() }
 
 /* ---------- RPC Sistema de archivos ---------- */
 
-// 1. Transferir archivo
-/* 	Valida ruta; construye comando TRANSFER; devuelve success=true solo si el líder replicó la entrada.*/
+// 1. Transferir archivo (TRANSFER)
 func (ns *NetworkService) TransferFile(
 	ctx context.Context, req *pb.FileData) (*pb.GenericResponse, error) {
 
 	if !ns.fileMgr.ValidatePath(req.Filename) {
 		return &pb.GenericResponse{Success: false, Message: "ruta inválida"}, nil
 	}
-	err := ns.buildAndPropose(pb.FileCommand_TRANSFER, req.Filename, req.Content)
-	return &pb.GenericResponse{Success: err == nil, Message: msg(err, "transferencia replicada")}, nil
+
+	// ① intento local
+	if err := ns.buildAndPropose(pb.FileCommand_TRANSFER, req.Filename, req.Content); err != nil {
+		if err.Error() != "no soy líder" { // error real
+			return &pb.GenericResponse{Success: false, Message: err.Error()}, nil
+		}
+		// ② soy follower → reenvío
+		return forwardToLeader(ns, ctx, func(cli pb.RaftServiceClient) (*pb.GenericResponse, error) {
+			return cli.TransferFile(ctx, req)
+		})
+	}
+	return &pb.GenericResponse{Success: true, Message: "transferencia replicada"}, nil
 }
 
-//  2. Borrar archivo
-//     Igual que arriba pero con operación DELETE.
+// 2. Borrar archivo (DELETE)
 func (ns *NetworkService) DeleteFile(
 	ctx context.Context, req *pb.DeleteRequest) (*pb.GenericResponse, error) {
 
 	if !ns.fileMgr.ValidatePath(req.Filename) {
 		return &pb.GenericResponse{Success: false, Message: "ruta inválida"}, nil
 	}
-	err := ns.buildAndPropose(pb.FileCommand_DELETE, req.Filename, nil)
-	return &pb.GenericResponse{Success: err == nil, Message: msg(err, "archivo borrado")}, nil
+
+	if err := ns.buildAndPropose(pb.FileCommand_DELETE, req.Filename, nil); err != nil {
+		if err.Error() != "no soy líder" {
+			return &pb.GenericResponse{Success: false, Message: err.Error()}, nil
+		}
+		return forwardToLeader(ns, ctx, func(cli pb.RaftServiceClient) (*pb.GenericResponse, error) {
+			return cli.DeleteFile(ctx, req)
+		})
+	}
+	return &pb.GenericResponse{Success: true, Message: "archivo borrado"}, nil
 }
 
-// 3. Crear directorio
-// Crea directorio (MKDIR).
+// 3. Crear directorio (MKDIR)
 func (ns *NetworkService) MkDir(
 	ctx context.Context, req *pb.MkDirRequest) (*pb.GenericResponse, error) {
 
 	if !ns.fileMgr.ValidatePath(req.Dirname) {
 		return &pb.GenericResponse{Success: false, Message: "ruta inválida"}, nil
 	}
-	err := ns.buildAndPropose(pb.FileCommand_MKDIR, req.Dirname, nil)
-	return &pb.GenericResponse{Success: err == nil, Message: msg(err, "directorio creado")}, nil
+
+	if err := ns.buildAndPropose(pb.FileCommand_MKDIR, req.Dirname, nil); err != nil {
+		if err.Error() != "no soy líder" {
+			return &pb.GenericResponse{Success: false, Message: err.Error()}, nil
+		}
+		return forwardToLeader(ns, ctx, func(cli pb.RaftServiceClient) (*pb.GenericResponse, error) {
+			return cli.MkDir(ctx, req)
+		})
+	}
+	return &pb.GenericResponse{Success: true, Message: "directorio creado"}, nil
 }
 
-// 4. Eliminar directorio
-// Elimina directorio (RMDIR).
+// 4. Eliminar directorio (RMDIR)
 func (ns *NetworkService) RemoveDir(
 	ctx context.Context, req *pb.RemoveDirRequest) (*pb.GenericResponse, error) {
 
 	if !ns.fileMgr.ValidatePath(req.Dirname) {
 		return &pb.GenericResponse{Success: false, Message: "ruta inválida"}, nil
 	}
-	err := ns.buildAndPropose(pb.FileCommand_RMDIR, req.Dirname, nil)
-	return &pb.GenericResponse{Success: err == nil, Message: msg(err, "directorio eliminado")}, nil
+
+	if err := ns.buildAndPropose(pb.FileCommand_RMDIR, req.Dirname, nil); err != nil {
+		if err.Error() != "no soy líder" {
+			return &pb.GenericResponse{Success: false, Message: err.Error()}, nil
+		}
+		return forwardToLeader(ns, ctx, func(cli pb.RaftServiceClient) (*pb.GenericResponse, error) {
+			return cli.RemoveDir(ctx, req)
+		})
+	}
+	return &pb.GenericResponse{Success: true, Message: "directorio eliminado"}, nil
 }
 
 // 5. Listar (read-only, sin consenso)
@@ -312,6 +343,10 @@ func (ns *NetworkService) AppendEntries(
 	// 2. Término nuevo → nos volvemos follower
 	if int(req.Term) > rf.currentTerm {
 		rf.stepDownToFollower(int(req.Term))
+	}
+
+	if int(req.Term) >= rf.currentTerm {
+		rf.leaderID = int(req.LeaderId) // memoriza quién es el líder
 	}
 
 	// 🔑 3. CUALQUIER AppendEntries válido reinicia el timer
@@ -492,4 +527,55 @@ func (rf *Raft) readPersist() {
 	}
 	rf.currentTerm = state.Term
 	rf.votedFor = state.VotedFor
+}
+
+func forwardToLeader[T any](
+	ns *NetworkService,
+	ctx context.Context,
+	call func(pb.RaftServiceClient) (T, error),
+) (T, error) {
+
+	var zero T
+
+	// 1) ¿Conocemos al líder?
+	ns.node.raft.mu.RLock()
+	leaderID := ns.node.raft.leaderID
+	ns.node.raft.mu.RUnlock()
+	if leaderID == -1 {
+		return zero, status.Error(codes.Unavailable, "no hay líder disponible")
+	}
+
+	// 2) Conexión (o reconexión) al líder
+	peer, err := ns.node.GetOrConnect(leaderID)
+	if err != nil {
+		return zero, status.Error(codes.Unavailable, err.Error())
+	}
+
+	// 3) Ejecutar la misma RPC en el stub del líder
+	return call(peer.client)
+}
+
+// node/node.go  – helper para obtener (o crear) la conexión al peer ‹id›.
+func (n *Node) GetOrConnect(id int) (*Peer, error) {
+	// 1) Lectura protegida de la slice de peers
+	n.raft.mu.RLock()
+	if id < 0 || id >= len(n.raft.peers) {
+		n.raft.mu.RUnlock()
+		return nil, fmt.Errorf("peer %d fuera de rango", id)
+	}
+	p := n.raft.peers[id]
+	n.raft.mu.RUnlock()
+
+	if p == nil {
+		return nil, fmt.Errorf("peer %d desconocido", id)
+	}
+
+	// 2) Si está inactivo → un único intento de reconexión
+	if !p.IsActive() {
+		p.Reconnect()      // método «void»: ignoramos error
+		if !p.IsActive() { // seguimos inactivos → fallo real
+			return nil, fmt.Errorf("no se pudo reconectar con peer %d", id)
+		}
+	}
+	return p, nil
 }

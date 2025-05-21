@@ -71,10 +71,9 @@ func NewNode(id int, addr string, peers []*Peer) *Node {
 	svc := &NetworkService{node: n, fileMgr: n.fileMgr}
 	n.server = grpc.NewServer(
 		grpc.KeepaliveEnforcementPolicy(kaep),
-		grpc.ChainUnaryInterceptor(
+		/* grpc.ChainUnaryInterceptor(
 			n.connectionStateInterceptor(),
-			n.leaderInterceptor(), // versión filtrada solo para RPC de FS
-		),
+		), */
 	)
 	pb.RegisterRaftServiceServer(n.server, svc)
 	reflection.Register(n.server)
@@ -202,7 +201,7 @@ func (n *Node) loadPersistentState() {
    Si llega otra RPC (AppendEntries, RequestVote…) la deja pasar.
 
    Si el nodo no es líder, responde codes.FailedPrecondition. */
-func (n *Node) leaderInterceptor() grpc.UnaryServerInterceptor {
+/* func (n *Node) leaderInterceptor() grpc.UnaryServerInterceptor {
 	requiresLeader := map[string]bool{
 		"/proto.RaftService/TransferFile": true,
 		"/proto.RaftService/DeleteFile":   true,
@@ -221,7 +220,7 @@ func (n *Node) leaderInterceptor() grpc.UnaryServerInterceptor {
 		}
 		return handler(ctx, req)
 	}
-}
+} */
 
 /* ---------- métrica HTTP ---------- */
 /* Servicio HTTP mínimo para observabilidad:
@@ -337,3 +336,21 @@ func (sm *SnapshotManager) Cleanup() {
 		}
 	}
 }
+
+/* // node/node.go – coloca esto junto a otros helpers
+func (n *Node) GetOrConnect(id int) (*Peer, error) {
+	if id < 0 || id >= len(n.raft.peers) {
+		return nil, fmt.Errorf("peer %d fuera de rango", id)
+	}
+	p := n.raft.peers[id]
+	if p == nil {
+		return nil, fmt.Errorf("peer %d desconocido", id)
+	}
+	if !p.IsActive() {
+		if err := p.Reconnect(); err != nil {
+			return nil, err
+		}
+	}
+	return p, nil
+}
+*/

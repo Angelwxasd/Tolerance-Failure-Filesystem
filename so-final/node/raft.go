@@ -84,6 +84,8 @@ type Raft struct {
 	nextIndex  []int
 	matchIndex []int
 
+	leaderID int
+
 	state         RaftState
 	electionTimer *time.Timer
 
@@ -129,6 +131,7 @@ func NewRaft(id int, peers []*Peer) *Raft {
 		// ⬇️ Entrada sentinela: índice 0 siempre existe y tiene Term 0
 		log:        []LogEntry{{Term: 0}},
 		peers:      peers,
+		leaderID:   -1,
 		nextIndex:  make([]int, size),
 		matchIndex: make([]int, size),
 		dataDir:    os.Getenv("RAFT_DATA_DIR"),
@@ -420,6 +423,7 @@ func (rf *Raft) becomeLeader() {
 	}
 	rf.state = Leader
 	lastIndex := rf.lastIncludedIndex + len(rf.log) - 1
+	rf.leaderID = rf.id
 	for i := range rf.nextIndex {
 		rf.nextIndex[i] = lastIndex + 1
 	}
